@@ -1,0 +1,75 @@
+--- a/tests/ui_scroll_scene.c
++++ b/tests/ui_scroll_scene.c
+@@ -74,11 +74,48 @@
+ 	return 1;
+ }
+ 
++/* The high byte of a native Cairo RGB24 pixel is unspecified. */
++static void check_visible_pixels(int offset, const uint32_t *reference)
++{
++	int left = W, top = H, right = -1, bottom = -1;
++	guint changed = 0, padding = 0;
++	uint32_t first = 0, expected = 0;
++
++	for (int y = 0; y < H; y++) {
++		for (int x = 0; x < W; x++) {
++			uint32_t actual = presented[y][x];
++			uint32_t wanted = reference[y * W + x];
++
++			if (actual == wanted)
++				continue;
++			if (!((actual ^ wanted) & 0x00ffffff)) {
++				padding++;
++				continue;
++			}
++			if (!changed) {
++				first = actual;
++				expected = wanted;
++			}
++			changed++;
++			left = MIN(left, x);
++			top = MIN(top, y);
++			right = MAX(right, x);
++			bottom = MAX(bottom, y);
++		}
++	}
++	if (changed || padding)
++		g_test_message("Offset %d: %u RGB differences in (%d,%d)-(%d,%d), "
++			       "first actual %#08x expected %#08x, %u padding-only differences",
++			       offset, changed, left, top, right, bottom, first,
++			       expected, padding);
++	g_assert_cmpuint(changed, ==, 0);
++}
++
+ static void history(void)
+ {
+ 	int positions[] = { 0,	 3,   9,   76,	285, 304, 327,
+ 			    448, 512, 405, 377, 305, 11 };
+-	char *reference[G_N_ELEMENTS(positions)];
++	uint32_t *reference[G_N_ELEMENTS(positions)];
+ 
+ 	SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
+ 	g_setenv("LINE_REDUCE_MOTION", "1", TRUE);
+@@ -118,9 +155,7 @@
+ 	for (guint i = 0; i < G_N_ELEMENTS(positions); i++) {
+ 		ui.history_offset = positions[i];
+ 		ui_draw();
+-		reference[i] = g_compute_checksum_for_data(
+-			G_CHECKSUM_SHA256, (const guint8 *)presented,
+-			sizeof(presented));
++		reference[i] = g_memdup2(presented, sizeof(presented));
+ 	}
+ 	for (guint i = 0; i < G_N_ELEMENTS(positions); i++) {
+ 		ui.history_offset = positions[i];
+@@ -133,10 +168,7 @@
+ 			g_assert_cmpuint(full, ==, before + 1);
+ 		} else
+ 			ui_draw_region(ui.conversation);
+-		g_autofree char *actual = g_compute_checksum_for_data(
+-			G_CHECKSUM_SHA256, (const guint8 *)presented,
+-			sizeof(presented));
+-		g_assert_cmpstr(actual, ==, reference[i]);
++		check_visible_pixels(positions[i], reference[i]);
+ 		if (i == 1) {
+ 			g_test_message(
+ 				"3 px scroll uploaded %u of %d history texels",

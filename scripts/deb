@@ -19,6 +19,17 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 makefiles=(-f Makefile)
 
+# This revision checksums Cairo RGB24 padding, whose value is unspecified.
+# Compile the original scrolling fixture with all visible channels compared
+# and report the bounding box when the render really differs.
+if [[ "$commit" == 8c8d0f5bc8659eb7f27f31d12efd302a2a753376 ]]; then
+    patch --quiet --output="$scratch/ui_scroll_scene.c" "$src/tests/ui_scroll_scene.c" \
+        < "$(dirname "$0")/../patches/8c8d0f5-visible-scroll-pixels.patch"
+    sed "s|^build/test-ui-scroll-scene: tests/ui_scroll_scene.c$|build/test-ui-scroll-scene: $scratch/ui_scroll_scene.c|" \
+        "$src/Makefile" > "$scratch/Makefile"
+    makefiles=(-f "$scratch/Makefile")
+fi
+
 # Some versions of Pango lack the cleanup declaration used by the Flex tests.
 flex_test="$src/tests/ui_flex.c"
 if [[ -f "$flex_test" ]] && grep -Fq 'g_autoptr(PangoContext)' "$flex_test" &&
