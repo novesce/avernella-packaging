@@ -1,0 +1,21 @@
+--- a/src/ui_draw.c
++++ b/src/ui_draw.c
+@@ -2818,9 +2818,16 @@
+ 	cairo_scale(cr, sx, sy);
+ 	if (!context || sx != text_scale_x || sy != text_scale_y) {
+ 		ui_forget_labels();
+-		if (!context)
++		if (!context) {
+ 			context = pango_cairo_create_context(cr);
+-		else
++			if (gpu) {
++				/* Texture scrolling and scaling have no fixed LCD subpixel order. */
++				cairo_font_options_t *options = cairo_font_options_create();
++				cairo_font_options_set_antialias(options, CAIRO_ANTIALIAS_GRAY);
++				pango_cairo_context_set_font_options(context, options);
++				cairo_font_options_destroy(options);
++			}
++		} else
+ 			pango_cairo_update_context(cr, context);
+ 		text_scale_x = sx;
+ 		text_scale_y = sy;

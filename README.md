@@ -34,3 +34,5 @@ The [GitHub Actions workflow](.github/workflows/packages.yml) runs on `ubuntu-la
 The source repository queues builds through a dedicated deploy key for this packaging repo. The corresponding private key is stored as Avernella’s `PACKAGE_QUEUE_KEY` Actions secret. To retry a build, run `gh workflow run packages.yml -R novesce/avernella-packaging`.
 
 When a newer release is available, the workflow builds the recipe in a clean Arch container, installs it, checks the executable and browser helpers for unresolved libraries and symbols, and runs `avernella --help`. It pushes the verified `PKGBUILD` and `.SRCINFO` to the AUR using the registered maintainer key in the `AUR_SSH_PRIVATE_KEY` packaging repository secret. To regenerate the recipe locally on Arch, run `scripts/aur-recipe path/to/release.deb FULL_APP_COMMIT output-directory`.
+
+The Ubuntu package for source revision `8c8d0f5` backports grayscale text antialiasing on scrollable GPU textures. Its source archive contains the exact patched files, and the installed package includes the diff at `/usr/share/doc/avernella/packaging.patch`.

@@ -19,15 +19,14 @@ scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
 makefiles=(-f Makefile)
 
-# This revision checksums Cairo RGB24 padding, whose value is unspecified.
-# Compile the original scrolling fixture with all visible channels compared
-# and report the bounding box when the render really differs.
+# Reproduce a historical source revision with its narrowly scoped Ubuntu
+# backports in an isolated checkout. Ship the exact applied diff as well.
 if [[ "$commit" == 8c8d0f5bc8659eb7f27f31d12efd302a2a753376 ]]; then
-    patch --quiet --output="$scratch/ui_scroll_scene.c" "$src/tests/ui_scroll_scene.c" \
-        < "$(dirname "$0")/../patches/8c8d0f5-visible-scroll-pixels.patch"
-    sed "s|^build/test-ui-scroll-scene: tests/ui_scroll_scene.c$|build/test-ui-scroll-scene: $scratch/ui_scroll_scene.c|" \
-        "$src/Makefile" > "$scratch/Makefile"
-    makefiles=(-f "$scratch/Makefile")
+    packaging=$(realpath "$(dirname "$0")/..")
+    git clone --quiet --shared --no-checkout "$src" "$scratch/source"
+    src="$scratch/source"
+    git -C "$src" checkout --quiet --detach "$commit"
+    git -C "$src" apply "$packaging"/patches/8c8d0f5-*.patch
 fi
 
 # Some versions of Pango lack the cleanup declaration used by the Flex tests.
@@ -57,6 +56,10 @@ install -m644 "$src"/analysis/*-LICENSE "$docs/"
 install -m644 "$json_c/COPYING" "$docs/json-c-copyright"
 install -m644 "$rnnoise/COPYING" "$docs/rnnoise-copyright"
 printf '%s\n' "$commit" > "$docs/source-commit"
+if [[ "$src" == "$scratch/source" ]]; then
+    git -C "$src" diff --binary HEAD > "$out/packaging.patch"
+    install -m644 "$out/packaging.patch" "$docs/packaging.patch"
+fi
 "$root/usr/bin/avernella" --help
 
 executables=(-e "$root/usr/bin/avernella" -e "$private/avernella-liff-gtk")

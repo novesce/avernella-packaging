@@ -77,6 +77,9 @@ jobs:
                 scripts/ubuntu-check "$dir"; then
               mkdir -p "$dir/source/avernella/dependencies"
               git -C upstream archive "$sha" | tar -xf - -C "$dir/source/avernella"
+              if [[ -s "$dir/packaging.patch" ]]; then
+                patch --quiet -d "$dir/source/avernella" -p1 < "$dir/packaging.patch"
+              fi
               cp out/{json-c,rnnoise,vulkan}/sources/* "$dir/source/avernella/dependencies/"
               git archive HEAD --prefix=avernella-packaging/ | tar -xf - -C "$dir/source"
               tar -C "$dir/source" -czf "$dir/avernella-source.tar.gz" avernella avernella-packaging
@@ -106,9 +109,12 @@ jobs:
             (cd "$dir" && sha256sum "${assets[@]}" > SHA256SUMS)
             latest=false
             [[ "$sha" != "$tip" ]] || latest=true
+            notes="Built on $PRETTY_NAME (GitHub ubuntu-latest, amd64) from https://github.com/novesce/avernella/commit/$sha."
+            if [[ -s "$dir/packaging.patch" ]]; then
+              notes+=" Includes the Ubuntu scrolling fix. The installed package contains the applied diff in /usr/share/doc/avernella/packaging.patch, and the source archive includes the patched sources."
+            fi
             gh release create "avernella-$sha" --latest="$latest" \
-              --title "Avernella $version" \
-              --notes "Built on $PRETTY_NAME (GitHub ubuntu-latest, amd64) from https://github.com/novesce/avernella/commit/$sha." \
+              --title "Avernella $version" --notes "$notes" \
               "${assets[@]/#/$dir/}" "$dir/SHA256SUMS"
           done < pending
           exit "$failed"
