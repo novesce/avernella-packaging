@@ -21,12 +21,15 @@ packages=(avernella-bin-*.pkg.tar.zst)
 pacman -U --noconfirm "${packages[0]}"
 pacman -Qk avernella-bin
 helpers=(/usr/lib/avernella/avernella-liff-gtk)
+if [[ -f /usr/lib/avernella/avernella-vulkan.so ]]; then
+    helpers+=(/usr/lib/avernella/avernella-vulkan.so)
+fi
 if [[ -x /usr/lib/avernella/avernella-liff ]]; then
     pacman -S --needed --noconfirm wpewebkit
     helpers+=(/usr/lib/avernella/avernella-liff)
 fi
 for elf in /usr/bin/avernella "${helpers[@]}"; do
-    [[ -x "$elf" ]]
+    [[ -f "$elf" ]]
     output=$(LC_ALL=C ldd -r "$elf" 2>&1)
     if grep -E 'undefined symbol|not found' <<< "$output" >&2; then
         exit 1

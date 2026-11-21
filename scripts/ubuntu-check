@@ -14,6 +14,9 @@ for binary in "${executables[@]}"; do
         exit 1
     fi
 done
+if [[ -f /usr/lib/avernella/avernella-vulkan.so ]]; then
+    python3 -c "import ctypes; lib = ctypes.CDLL('/usr/lib/avernella/avernella-vulkan.so'); lib.avernella_gpu_v1"
+fi
 avernella --help
 GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- python3 \
     "$(dirname "$0")/liff-smoke" /usr/lib/avernella/avernella-liff-gtk

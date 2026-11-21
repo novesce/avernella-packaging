@@ -5,6 +5,7 @@ src=$(realpath "${1:?Path to an Avernella checkout is required}")
 out=$(realpath -m "${2:?Output directory is required}")
 json_c=$(realpath "${3:?Path to the json-c build is required}")
 rnnoise=$(realpath "${4:?Path to the RNNoise build is required}")
+sdk=$(realpath "${5:?Path to the pinned Vulkan SDK is required}")
 commit=$(git -C "$src" rev-parse HEAD)
 revision=$(git -C "$src" rev-list --count HEAD)
 version="0.1+git$revision.${commit:0:7}"
@@ -33,7 +34,8 @@ HEADER
     makefiles+=(-f "$scratch/pango.mk")
 fi
 
-make -C "$src" "${makefiles[@]}" CC=gcc LIFF_BROWSER=1 LIFF_GTK=1 all check
+make -C "$src" "${makefiles[@]}" CC=gcc LIFF_BROWSER=1 LIFF_GTK=1 \
+    NATIVE_VULKAN=1 VOLK_DIR="$sdk/volk" VK_HEADERS="$sdk/headers/include" all check
 root="$scratch/package"
 private="$root/usr/lib/avernella"
 docs="$root/usr/share/doc/avernella"
@@ -47,6 +49,12 @@ printf '%s\n' "$commit" > "$docs/source-commit"
 "$root/usr/bin/avernella" --help
 
 executables=(-e "$root/usr/bin/avernella" -e "$private/avernella-liff-gtk")
+if [[ -f "$src/src/render/vk_backend.c" ]]; then
+    test -f "$private/avernella-vulkan.so"
+    executables+=(-e "$private/avernella-vulkan.so")
+    install -m644 "$sdk/volk/LICENSE.md" "$docs/volk-copyright"
+    install -m644 "$sdk/headers/LICENSES/MIT.txt" "$docs/vulkan-headers-copyright"
+fi
 if [[ -x "$private/avernella-liff" ]]; then
     executables+=(-e "$private/avernella-liff")
 fi
@@ -71,7 +79,7 @@ Priority: optional
 Maintainer: novesce <120620395+novesce@users.noreply.github.com>
 Homepage: https://github.com/novesce/avernella
 Depends: $depends
-Recommends: ffmpeg, xdg-desktop-portal
+Recommends: ffmpeg, xdg-desktop-portal, libvulkan1
 Description: Independent Linux client compatible with LINE
  A native GCC-built desktop client for LINE personal accounts.
 CONTROL

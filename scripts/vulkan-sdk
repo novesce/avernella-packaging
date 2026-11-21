@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out=$(realpath -m "${1:?Vulkan SDK output directory is required}")
+mkdir -p "$out"/{headers,volk,sources}
+cd "$out/sources"
+curl -fsSL --retry 3 -o vulkan-headers.tar.gz \
+    https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/vulkan-sdk-1.4.363.0
+curl -fsSL --retry 3 -o volk.tar.gz \
+    https://codeload.github.com/zeux/volk/tar.gz/54fc0d7a72887cbfc5b030d26897b2b40ac53fb8
+sha256sum --check --strict <<'SUMS'
+4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e  vulkan-headers.tar.gz
+4944450dc3943871a28ce993eaf995309eb29e7000e091309968dba4cd321648  volk.tar.gz
+SUMS
+tar -xzf vulkan-headers.tar.gz --strip-components=1 -C "$out/headers"
+tar -xzf volk.tar.gz --strip-components=1 -C "$out/volk"
