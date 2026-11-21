@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+src=${1:-upstream}
+published=$(mktemp)
+trap 'rm -f -- "$published"' EXIT
+gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+    --jq '.[] | select(.draft == false) | .tag_name' > "$published"
+
+git -C "$src" rev-list --reverse --topo-order HEAD |
+    while IFS= read -r commit; do
+        if ! grep -Fxq "avernella-$commit" "$published"; then
+            printf '%s\n' "$commit"
+        fi
+    done

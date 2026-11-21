@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ubuntu 26.04's json-c 0.18 rejects some valid Unicode in strict mode.
+# See https://github.com/json-c/json-c/issues/875.
+version=0.19
+checksum=704927172443309a8efeb162060bb215548e1286e5568514007dd2cc35a0a164
+out=$(realpath -m "${1:?Output directory is required}")
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+archive="$scratch/json-c-$version-nodoc.tar.gz"
+curl --fail --silent --show-error --location --retry 3 \
+    "https://s3.amazonaws.com/json-c_releases/releases/json-c-$version-nodoc.tar.gz" -o "$archive"
+printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check
+tar -xzf "$archive" -C "$scratch"
+src="$scratch/json-c-$version"
+cmake -S "$src" -B "$scratch/build" -G Ninja \
+    -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Release \
+    '-DCMAKE_C_FLAGS_RELEASE=-Os -DNDEBUG' -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON \
+    -DCMAKE_INSTALL_PREFIX="$out" -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF -DBUILD_STATIC_LIBS=ON -DBUILD_APPS=OFF -DBUILD_TESTING=OFF
+cmake --build "$scratch/build" --parallel "$(nproc)"
+cmake --install "$scratch/build"
+install -m644 "$src/COPYING" "$out/COPYING"
+install -Dm644 "$archive" "$out/sources/json-c-$version-nodoc.tar.gz"
+PKG_CONFIG_PATH="$out/lib/pkgconfig" pkg-config --exact-version="$version" json-c

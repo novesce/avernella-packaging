@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+import http.server
+import os
+import select
+import signal
+import socket
+import sys
+import tempfile
+import threading
+import time
+
+
+class TestPage(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = (
+            b"<!doctype html><title>Avernella test</title><script>"
+            b"console.log('LIFF bridge ready:', typeof window._liff === 'object')"
+            b"</script>"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+
+def check(binary, server, data):
+    client, helper = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    read_fd, write_fd = os.pipe()
+    env = os.environ | {
+        "LINE_DEBUG_LIFF": "1",
+        "XDG_DATA_HOME": data,
+        "XDG_CACHE_HOME": data,
+    }
+    with client, helper, os.fdopen(read_fd, "rb", buffering=0) as output:
+        try:
+            pid = os.posix_spawn(binary, [binary, str(os.getpid())], env,
+                                 file_actions=[
+                                     (os.POSIX_SPAWN_DUP2, helper.fileno(), 3),
+                                     (os.POSIX_SPAWN_DUP2, write_fd, 2),
+                                 ])
+        finally:
+            os.close(write_fd)
+        helper.close()
+        try:
+            client.settimeout(15)
+            if client.recv(128) != b"B\tready":
+                raise RuntimeError("LIFF helper did not report readiness")
+            client.sendall(f"L\tcompact\thttp://127.0.0.1:{server.server_port}/".encode())
+            deadline = time.monotonic() + 15
+            log = b""
+            while select.select([output], [], [], max(0, deadline - time.monotonic()))[0]:
+                data = output.read(4096)
+                if not data:
+                    break
+                log += data
+                if b"LIFF bridge ready: true" in log:
+                    print("LIFF helper loaded the test page and initialized the bridge.")
+                    return
+            raise RuntimeError(f"LIFF test page did not initialize.\n{log.decode(errors='replace')}")
+        finally:
+            client.close()
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            os.waitpid(pid, 0)
+
+
+with tempfile.TemporaryDirectory(prefix="avernella-liff-test-") as profile:
+    with http.server.HTTPServer(("127.0.0.1", 0), TestPage) as http:
+        threading.Thread(target=http.serve_forever, daemon=True).start()
+        try:
+            check(os.path.abspath(sys.argv[1]), http, profile)
+        finally:
+            http.shutdown()

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+out=$(realpath "${1:?Package output directory is required}")
+read -r deb < "$out/deb-name"
+sudo apt-get install -y --allow-downgrades --no-install-recommends "$out/$deb"
+executables=(/usr/bin/avernella /usr/lib/avernella/avernella-liff-gtk)
+if [[ -x /usr/lib/avernella/avernella-liff ]]; then
+    executables+=(/usr/lib/avernella/avernella-liff)
+fi
+for binary in "${executables[@]}"; do
+    [[ -x "$binary" ]]
+    relocations=$(ldd -r "$binary" 2>&1)
+    if grep -Ei 'undefined symbol|not found' <<< "$relocations"; then
+        exit 1
+    fi
+done
+avernella --help
+GDK_BACKEND=x11 xvfb-run -a dbus-run-session -- python3 \
+    "$(dirname "$0")/liff-smoke" /usr/lib/avernella/avernella-liff-gtk

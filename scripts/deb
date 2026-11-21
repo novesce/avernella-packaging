@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+src=$(realpath "${1:?Path to an Avernella checkout is required}")
+out=$(realpath -m "${2:?Output directory is required}")
+json_c=$(realpath "${3:?Path to the json-c build is required}")
+rnnoise=$(realpath "${4:?Path to the RNNoise build is required}")
+commit=$(git -C "$src" rev-parse HEAD)
+revision=$(git -C "$src" rev-list --count HEAD)
+version="0.1+git$revision.${commit:0:7}"
+arch=$(dpkg --print-architecture)
+export SOURCE_DATE_EPOCH=$(git -C "$src" log -1 --format=%ct)
+export PKG_CONFIG_PATH="$json_c/lib/pkgconfig:$rnnoise/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+pkg-config --exists webkitgtk-6.0 rnnoise
+pkg-config --atleast-version=0.19 json-c
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+makefiles=(-f Makefile)
+
+# Some versions of Pango lack the cleanup declaration used by the Flex tests.
+flex_test="$src/tests/ui_flex.c"
+if [[ -f "$flex_test" ]] && grep -Fq 'g_autoptr(PangoContext)' "$flex_test" &&
+    ! grep -Eq 'G_DEFINE_AUTOPTR_CLEANUP_FUNC[[:space:]]*\([[:space:]]*PangoContext' "$flex_test" &&
+    ! printf '#include <pango/pango.h>\nvoid probe(void) { g_autoptr(PangoContext) context = NULL; }\n' |
+        gcc $(pkg-config --cflags pango) -fsyntax-only -x c - 2>/dev/null; then
+    cat > "$scratch/pango-autoptr.h" <<'HEADER'
+#include <pango/pango.h>
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(PangoContext, g_object_unref)
+HEADER
+    printf 'build/test-ui-flex: private CPPFLAGS += -include "%s"\n' \
+        "$scratch/pango-autoptr.h" > "$scratch/pango.mk"
+    makefiles+=(-f "$scratch/pango.mk")
+fi
+
+make -C "$src" "${makefiles[@]}" CC=gcc LIFF_BROWSER=1 LIFF_GTK=1 all check
+root="$scratch/package"
+private="$root/usr/lib/avernella"
+docs="$root/usr/share/doc/avernella"
+make -C "$src" install DESTDIR="$root" PREFIX=/usr
+mkdir -p "$root/DEBIAN" "$docs" "$scratch/debian" "$out"
+install -m644 "$src/LICENSE" "$docs/copyright"
+install -m644 "$src"/analysis/*-LICENSE "$docs/"
+install -m644 "$json_c/COPYING" "$docs/json-c-copyright"
+install -m644 "$rnnoise/COPYING" "$docs/rnnoise-copyright"
+printf '%s\n' "$commit" > "$docs/source-commit"
+"$root/usr/bin/avernella" --help
+
+executables=(-e "$root/usr/bin/avernella" -e "$private/avernella-liff-gtk")
+if [[ -x "$private/avernella-liff" ]]; then
+    executables+=(-e "$private/avernella-liff")
+fi
+cat > "$scratch/debian/control" <<'CONTROL'
+Source: avernella
+Maintainer: novesce <120620395+novesce@users.noreply.github.com>
+
+Package: avernella
+Architecture: any
+Description: Independent Linux client compatible with LINE
+CONTROL
+
+depends=$(cd "$scratch" && dpkg-shlibdeps -O "${executables[@]}" |
+    sed -n 's/^shlibs:Depends=//p')
+[[ "$depends" == *libwebkitgtk-6.0* ]]
+cat > "$root/DEBIAN/control" <<CONTROL
+Package: avernella
+Version: $version
+Architecture: $arch
+Section: net
+Priority: optional
+Maintainer: novesce <120620395+novesce@users.noreply.github.com>
+Homepage: https://github.com/novesce/avernella
+Depends: $depends
+Recommends: ffmpeg, xdg-desktop-portal
+Description: Independent Linux client compatible with LINE
+ A native GCC-built desktop client for LINE personal accounts.
+CONTROL
+
+file="avernella_${version}_${arch}.deb"
+dpkg-deb -Zxz --root-owner-group --build "$root" "$out/$file"
+printf '%s\n' "$file" > "$out/deb-name"
+printf '%s\n' "$version" > "$out/version"

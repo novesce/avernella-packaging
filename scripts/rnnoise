@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+out=$(realpath -m "${1:?Output directory is required}")
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+archive="$scratch/rnnoise.tar.xz"
+curl --fail --silent --show-error --location --retry 3 \
+    'https://deb.debian.org/debian/pool/main/r/rnnoise/rnnoise_0.2+ds.orig.tar.xz' -o "$archive"
+printf '%s  %s\n' db2718ee4a0b294bfbbe198fe94aabfdc8cd0d77cb9cd95d76c7a818ad805f0b \
+    "$archive" | sha256sum --check
+tar -xJf "$archive" -C "$scratch"
+cd "$scratch/rnnoise-0.2"
+printf 'PACKAGE_VERSION="0.2"\n' > package_version
+autoreconf -fi
+CC=gcc CFLAGS='-O2 -fPIC' ./configure --prefix="$out" --libdir="$out/lib" \
+    --disable-shared --enable-static --disable-examples --disable-doc --enable-x86-rtcd
+make -j"$(nproc)"
+make install
+install -m644 COPYING "$out/COPYING"
+install -Dm644 "$archive" "$out/sources/rnnoise-0.2+ds.tar.xz"
+PKG_CONFIG_PATH="$out/lib/pkgconfig" pkg-config --exact-version=0.2 rnnoise
