@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+dir=$(realpath "${1:?Directory containing the verified AUR recipe is required}")
+hosts=$(realpath "$(dirname "$0")/../aur/known_hosts")
+umask 077
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+printf '%s\n' "${AUR_SSH_PRIVATE_KEY:?Missing AUR deploy key}" > "$scratch/key"
+unset AUR_SSH_PRIVATE_KEY
+cp "$hosts" "$scratch/hosts"
+export GIT_SSH_COMMAND="ssh -oBatchMode=yes -oIdentitiesOnly=yes -oStrictHostKeyChecking=yes -oUserKnownHostsFile=$scratch/hosts -i $scratch/key"
+git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/avernella-bin.git "$scratch/aur"
+cd "$scratch/aur"
+install -m644 "$dir"/{PKGBUILD,.SRCINFO} .
+git add -- PKGBUILD .SRCINFO
+if git diff --cached --quiet; then
+    exit 0
+fi
+version=$(awk '$1 == "pkgver" {print $3; exit}' .SRCINFO)
+git -c user.name=novesce -c user.email=120620395+novesce@users.noreply.github.com \
+    commit -m "Package Avernella $version"
+git push origin HEAD:refs/heads/master

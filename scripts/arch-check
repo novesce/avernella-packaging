@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run as root inside an ephemeral Arch base-devel container.
+out=$(realpath "${1:?Directory containing a verified DEB is required}")
+sha=${2:?Full upstream commit is required}
+root=$(realpath "$(dirname "$0")/..")
+debs=("$out"/avernella_*_amd64.deb)
+[[ ${#debs[@]} == 1 && -f "${debs[0]}" ]]
+pacman -Syu --noconfirm
+useradd -m builder
+cd /home/builder
+runuser -u builder -- "$root/scripts/aur-recipe" "${debs[0]}" "$sha" "$PWD/recipe"
+cd recipe
+cp "${debs[0]}" .
+mapfile -t deps < <(awk '$1 == "depends" {print $3}' .SRCINFO)
+pacman -S --needed --noconfirm "${deps[@]}"
+runuser -u builder -- makepkg --noconfirm --nocolor
+packages=(avernella-bin-*.pkg.tar.zst)
+[[ ${#packages[@]} == 1 ]]
+pacman -U --noconfirm "${packages[0]}"
+pacman -Qk avernella-bin
+helpers=(/usr/lib/avernella/avernella-liff-gtk)
+if [[ -x /usr/lib/avernella/avernella-liff ]]; then
+    pacman -S --needed --noconfirm wpewebkit
+    helpers+=(/usr/lib/avernella/avernella-liff)
+fi
+for elf in /usr/bin/avernella "${helpers[@]}"; do
+    [[ -x "$elf" ]]
+    output=$(LC_ALL=C ldd -r "$elf" 2>&1)
+    if grep -E 'undefined symbol|not found' <<< "$output" >&2; then
+        exit 1
+    fi
+done
+avernella --help
+install -m644 PKGBUILD .SRCINFO "$out/"

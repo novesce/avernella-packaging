@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deb=$(realpath "${1:?Path to an Avernella amd64 DEB is required}")
+sha=${2:?Full source commit is required}
+out=$(realpath -m "${3:?Recipe output directory is required}")
+template=$(dirname "$0")/../aur/PKGBUILD.in
+file=${deb##*/}
+[[ "$sha" =~ ^[a-f0-9]{40}$ && "$file" =~ ^avernella_(0\.1\+git[1-9][0-9]*\.([a-f0-9]{7}))_amd64\.deb$ ]]
+version=${BASH_REMATCH[1]}
+[[ "${BASH_REMATCH[2]}" == "${sha:0:7}" ]]
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+ar p "$deb" data.tar.xz | tar -xJf - -C "$scratch"
+[[ "$(< "$scratch/usr/share/doc/avernella/source-commit")" == "$sha" ]]
+app="$scratch/usr/bin/avernella"
+needed=$(LC_ALL=C readelf -d "$app")
+soname() {
+    local major
+    major=$(sed -nE "s/.*\\(NEEDED\\).*\\[$1\\.so\\.([0-9]+)\\].*/\\1/p" <<< "$needed")
+    [[ "$major" =~ ^[0-9]+$ ]] || { echo "Missing or ambiguous $1 SONAME" >&2; return 1; }
+    printf '%s.so=%s-64' "$1" "$major"
+}
+crypto=$(soname libcrypto)
+vpx=$(soname libvpx)
+wpe=''
+if [[ -x "$scratch/usr/lib/avernella/avernella-liff" ]]; then
+    wpe=" 'wpewebkit: Wayland WPE in-app browser'"
+fi
+sum=$(sha256sum "$deb")
+mkdir -p "$out"
+sed -e "s/@VERSION@/$version/g" -e "s/@SHA@/$sha/g" -e "s/@DEB@/$file/g" \
+    -e "s/@SUM@/${sum%% *}/g" -e "s/@CRYPTO@/$crypto/g" -e "s/@VPX@/$vpx/g" \
+    -e "s/@WPE@/$wpe/g" "$template" > "$scratch/PKGBUILD"
+(cd "$scratch" && makepkg --printsrcinfo > .SRCINFO)
+install -m644 "$scratch"/{PKGBUILD,.SRCINFO} "$out/"

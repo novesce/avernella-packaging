@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
@@ -21,6 +21,8 @@ defaults:
 
 jobs:
   package:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -109,3 +111,71 @@ jobs:
               "${assets[@]/#/$dir/}" "$dir/SHA256SUMS"
           done < pending
           exit "$failed"
+
+  arch:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check the latest release against the AUR
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release=$(gh release view --json tagName,assets)
+          tag=$(jq -er '.tagName' <<< "$release")
+          file=$(jq -er '[.assets[].name | select(endswith("_amd64.deb"))] | select(length == 1) | .[0]' <<< "$release")
+          [[ "$tag" =~ ^avernella-([a-f0-9]{40})$ ]]
+          sha=${BASH_REMATCH[1]}
+          [[ "$file" =~ ^avernella_(0\.1\+git[1-9][0-9]*\.([0-9a-f]{7}))_amd64\.deb$ ]]
+          version=${BASH_REMATCH[1]}
+          [[ "${BASH_REMATCH[2]}" == "${sha:0:7}" ]]
+          rel=$(sed -nE 's/^pkgrel=([0-9]+)$/\1/p' aur/PKGBUILD.in)
+          [[ -n "$rel" ]]
+          current=$(curl --fail --silent --show-error --retry 3 --get \
+            --data-urlencode 'arg[]=avernella-bin' https://aur.archlinux.org/rpc/v5/info |
+            jq -er 'select(.type == "multiinfo") | [.results[] | select(.Name == "avernella-bin") | .Version][0] // "0"')
+          if dpkg --compare-versions "$current" gt "$version-$rel"; then
+            echo 'The AUR already has a newer release.'
+          elif [[ "$current" != "$version-$rel" || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
+              ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
+            printf 'sha=%s\nfile=%s\n' "$sha" "$file" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify the released Debian asset
+        if: steps.plan.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          FILE: ${{ steps.plan.outputs.file }}
+        run: |
+          mkdir -p out/aur
+          cd out/aur
+          gh release download "avernella-$SHA" --pattern "$FILE" --pattern SHA256SUMS
+          hash=$(awk -v file="$FILE" '$2 == file {print $1}' SHA256SUMS)
+          [[ "$hash" =~ ^[a-f0-9]{64}$ ]]
+          printf '%s  %s\n' "$hash" "$FILE" | sha256sum --strict --check
+
+      - name: Build, install and check relocations on Arch Linux
+        if: steps.plan.outputs.sha != ''
+        env:
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          docker run --rm --pull=always \
+            -v "$PWD:/recipe:ro" -v "$PWD/out/aur:/out" \
+            archlinux:base-devel /recipe/scripts/arch-check /out "$SHA"
+
+      - name: Publish the verified AUR recipe
+        if: steps.plan.outputs.sha != ''
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [[ -n "$AUR_SSH_PRIVATE_KEY" ]]; then
+            scripts/publish-aur out/aur
+          else
+            echo 'Arch package validated. Configure AUR_SSH_PRIVATE_KEY to enable AUR updates.'
+          fi
