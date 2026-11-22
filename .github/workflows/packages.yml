@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
     tags: ['avernella-source-*']
+    paths-ignore:
+      - 'liney/**'
+      - '.github/workflows/liney-aur.yml'
   schedule:
     - cron: '7,27,47 * * * *'
   workflow_dispatch:

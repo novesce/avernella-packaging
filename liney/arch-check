@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run in an ephemeral archlinux:base-devel container with the verified inputs in /out.
+out=$(realpath "${1:?Directory containing PKGBUILD and its two sources is required}")
+[[ $(id -u) == 0 && -f "$out/PKGBUILD" ]]
+pacman -Syu --needed --noconfirm desktop-file-utils
+useradd -m builder
+work=/home/builder/liney-recipe
+install -d -o builder -g builder "$work"
+install -m644 "$out/PKGBUILD" "$work/PKGBUILD"
+cd "$work"
+runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
+version=$(awk '$1 == "pkgver" { print $3 }' .SRCINFO)
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+deb="Liney-$version-amd64.deb"
+license="Liney-$version-LICENSE"
+install -m644 "$out/$deb" "$out/$license" .
+mapfile -t deps < <(awk '$1 == "depends" { print $3 }' .SRCINFO)
+pacman -S --needed --noconfirm -- "${deps[@]}"
+
+# Verify names and control fields before makepkg reuses the downloaded binary.
+# The Debian postinstall/preremoval scripts are never executed.
+control=$(bsdtar -tf "$deb" | grep -Ex 'control\.tar\.(xz|gz|zst)')
+meta=$(bsdtar -xOf "$deb" "$control" | bsdtar -xOf - ./control)
+for field in 'Package: liney' "Version: $version" 'Architecture: amd64' 'License: LicenseRef-TLL-1.0'; do
+    grep -Fxq "$field" <<< "$meta"
+done
+runuser -u builder -- makepkg --cleanbuild --noconfirm --nocolor
+pkgs=(liney-bin-*.pkg.tar.zst)
+[[ ${#pkgs[@]} == 1 && -f "${pkgs[0]}" ]]
+stage="$work/stage"
+install -d -o builder -g builder "$stage"
+runuser -u builder -- bsdtar -xf "${pkgs[0]}" -C "$stage"
+grep -Fxq "pkgname = liney-bin" "$stage/.PKGINFO"
+grep -Fxq "license = LicenseRef-TLL-1.0" "$stage/.PKGINFO"
+cmp "$license" "$stage/usr/share/licenses/liney-bin/LICENSE"
+grep -Fq "archive/refs/tags/v$version.tar.gz" "$stage/usr/share/doc/liney/arch-package.txt"
+desktop="$stage/usr/share/applications/dev.cytechteam.liney.desktop"
+desktop-file-validate "$desktop"
+grep -Fxq 'Exec=/opt/Liney/liney %U' "$desktop"
+grep -Fxq 'Icon=liney' "$desktop"
+[[ -s "$stage/usr/share/icons/hicolor/128x128/apps/liney.png" ]]
+app="$stage/opt/Liney"
+[[ "$stage/usr/bin/liney" -ef "$app/liney" && ! -u "$app/chrome-sandbox" ]]
+[[ -s "$app/resources/app.asar" && -s "$app/resources/app.asar.unpacked/electron/dist/engine.mjs" ]]
+[[ -s "$app/LICENSE.electron.txt" && -s "$app/LICENSES.chromium.html" ]]
+native="$app/resources/app.asar.unpacked/electron/native"
+for elf in "$app/liney" "$app/chrome-sandbox" "$app/chrome_crashpad_handler" \
+        "$native"/liney-{audio,media,screen,screen-wayland,screen-x11}; do
+    [[ -x "$elf" ]]
+    # Have the trusted glibc loader resolve dependencies without running the application.
+    runuser -u builder -- /usr/lib/ld-linux-x86-64.so.2 --list "$elf" > /dev/null
+done
+install -m644 .SRCINFO "$out/.SRCINFO"

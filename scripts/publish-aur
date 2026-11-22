@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 dir=$(realpath "${1:?Directory containing the verified AUR recipe is required}")
+package=${2:-avernella-bin}
+case "$package" in
+    avernella-bin) app=Avernella ;;
+    liney-bin) app=Liney ;;
+    *) echo "Unknown package: $package" >&2; exit 1 ;;
+esac
+grep -Fxq "pkgbase = $package" "$dir/.SRCINFO"
 hosts=$(realpath "$(dirname "$0")/../aur/known_hosts")
 umask 077
 scratch=$(mktemp -d)
@@ -9,14 +16,23 @@ printf '%s\n' "${AUR_SSH_PRIVATE_KEY:?Missing AUR deploy key}" > "$scratch/key"
 unset AUR_SSH_PRIVATE_KEY
 cp "$hosts" "$scratch/hosts"
 export GIT_SSH_COMMAND="ssh -oBatchMode=yes -oIdentitiesOnly=yes -oStrictHostKeyChecking=yes -oUserKnownHostsFile=$scratch/hosts -i $scratch/key"
-git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/avernella-bin.git "$scratch/aur"
+git -c init.defaultBranch=master clone "ssh://aur@aur.archlinux.org/$package.git" "$scratch/aur"
 cd "$scratch/aur"
+version=$(awk '$1 == "pkgver" {print $3; exit}' "$dir/.SRCINFO")
+if [[ "$package" == liney-bin && -f .SRCINFO ]]; then
+    grep -Fxq 'pkgbase = liney-bin' .SRCINFO
+    current=$(awk '$1 == "pkgver" {print $3; exit}' .SRCINFO)
+    [[ $current =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+    if printf '%s\n' "$version" "$current" | LC_ALL=C sort -V -C; then
+        echo "The AUR already has Liney $current."
+        exit 0
+    fi
+fi
 install -m644 "$dir"/{PKGBUILD,.SRCINFO} .
 git add -- PKGBUILD .SRCINFO
 if git diff --cached --quiet; then
     exit 0
 fi
-version=$(awk '$1 == "pkgver" {print $3; exit}' .SRCINFO)
 git -c user.name=novesce -c user.email=120620395+novesce@users.noreply.github.com \
-    commit -m "Package Avernella $version"
+    commit -m "Package $app $version"
 git push origin HEAD:refs/heads/master

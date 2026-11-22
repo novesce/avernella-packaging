@@ -36,3 +36,15 @@ The source repository queues builds through a dedicated deploy key for this pack
 When a newer release is available, the workflow builds the recipe in a clean Arch container, installs it, checks the executable and browser helpers for unresolved libraries and symbols, and runs `avernella --help`. It pushes the verified `PKGBUILD` and `.SRCINFO` to the AUR using the registered maintainer key in the `AUR_SSH_PRIVATE_KEY` packaging repository secret. To regenerate the recipe locally on Arch, run `scripts/aur-recipe path/to/release.deb FULL_APP_COMMIT output-directory`.
 
 The Ubuntu package for source revision `8c8d0f5` backports grayscale text antialiasing on scrollable GPU textures. Its source archive contains the exact patched files, and the installed package includes the diff at `/usr/share/doc/avernella/packaging.patch`.
+
+## Liney on Arch Linux and CachyOS
+
+Install the separate [Liney package](https://aur.archlinux.org/packages/liney-bin) with an AUR helper.
+
+```sh
+paru -S liney-bin
+```
+
+The [Liney workflow](.github/workflows/liney-aur.yml) checks [Cytech Team’s stable releases](https://github.com/Cytech-Team/Liney/releases) every ten minutes, starting with version 0.1.36. Each AUR recipe downloads the upstream x86-64 Debian package and checks its SHA-256 digest. CI builds and checks the Arch package before pushing the recipe to the AUR. When several releases arrive between checks, CI publishes them in version order. GitHub may delay scheduled runs.
+
+To check for releases immediately, run `gh workflow run liney-aur.yml -R novesce/avernella-packaging`.

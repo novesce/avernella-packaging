@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""Print the stable Liney releases that still need an AUR package."""
+
+import json
+import os
+import re
+import sys
+from urllib.request import Request, urlopen
+
+
+REPO = "Cytech-Team/Liney"
+PKGNAME = "liney-bin"
+MAINTAINER = "autism.th"
+FIRST = (0, 1, 36)
+NUMBER = r"(?:0|[1-9][0-9]*)"
+VERSION = rf"{NUMBER}\.{NUMBER}\.{NUMBER}"
+
+
+def fetch(url, headers=None):
+    request = Request(url, headers={"User-Agent": "liney-aur", **(headers or {})})
+    with urlopen(request, timeout=30) as response:
+        return json.load(response)
+
+
+def version_key(version):
+    return tuple(int(part) for part in version.split("."))
+
+
+def published_version():
+    info = fetch(f"https://aur.archlinux.org/rpc/v5/info?arg%5B%5D={PKGNAME}")
+    results = info["results"]
+    if (info["type"] != "multiinfo" or not isinstance(results, list)
+            or info["resultcount"] != len(results)):
+        raise ValueError("unexpected AUR response")
+    if not results:
+        return None
+    if (len(results) != 1 or results[0]["Name"] != PKGNAME
+            or results[0]["Maintainer"] != MAINTAINER):
+        raise ValueError(f"unexpected AUR package or maintainer for {PKGNAME}")
+    match = re.fullmatch(rf"({VERSION})-[1-9][0-9]*(?:\.[0-9]+)?", results[0]["Version"])
+    if not match:
+        raise ValueError("unexpected AUR version; review before publishing")
+    return version_key(match[1])
+
+
+def github_releases():
+    headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    if token := os.environ.get("GH_TOKEN"):
+        headers["Authorization"] = f"Bearer {token}"
+    page = 1
+    while True:
+        batch = fetch(
+            f"https://api.github.com/repos/{REPO}/releases?per_page=100&page={page}", headers
+        )
+        if not isinstance(batch, list):
+            raise ValueError("unexpected GitHub releases response")
+        yield from batch
+        if len(batch) < 100:
+            return
+        page += 1
+
+
+def deb_metadata(release):
+    filename = f"Liney-{release['tag_name'][1:]}-amd64.deb"
+    return [(a.get("state"), a.get("browser_download_url"), a.get("digest"))
+            for a in release["assets"] if a["name"] == filename]
+
+
+def plan_release(release):
+    tag = release["tag_name"]
+    version = tag[1:]
+    filename = f"Liney-{version}-amd64.deb"
+    artifacts = deb_metadata(release)
+    if len(artifacts) != 1:
+        raise ValueError(f"expected exactly one {filename} asset on {tag}; retry later")
+    state, url, digest = artifacts[0]
+    expected_url = f"https://github.com/{REPO}/releases/download/{tag}/{filename}"
+    checksum = re.fullmatch(r"sha256:([a-f0-9]{64})", digest or "")
+    if state != "uploaded" or url != expected_url or not checksum:
+        raise ValueError(f"expected uploaded {filename} with official URL and SHA-256; retry later")
+    return {"version": version, "tag": tag, "sha256": checksum[1]}
+
+
+def pending(current, releases):
+    candidates = {}
+    for release in releases:
+        if type(release["draft"]) is not bool or type(release["prerelease"]) is not bool:
+            raise ValueError("invalid GitHub release flags")
+        if release["draft"] or release["prerelease"]:
+            continue
+        tag = release["tag_name"]
+        match = re.fullmatch(rf"v({VERSION})", tag)
+        if not match:
+            raise ValueError(f"unrecognized stable release tag {tag!r}; review before publishing")
+        version = match[1]
+        key = version_key(version)
+        if key < FIRST or (current is not None and key <= current):
+            continue
+        if key in candidates and deb_metadata(candidates[key]) != deb_metadata(release):
+            raise ValueError(f"inconsistent release metadata for {tag}; retry later")
+        candidates[key] = release
+
+    ready = []
+    for key in sorted(candidates):
+        try:
+            ready.append(plan_release(candidates[key]))
+        except ValueError as exc:
+            if not ready:
+                raise
+            print(f"Stopping after {ready[-1]['tag']}: {exc}", file=sys.stderr)
+            break
+    return ready
+
+
+if __name__ == "__main__":
+    try:
+        print(json.dumps(pending(published_version(), github_releases()), separators=(",", ":")))
+    except (KeyError, TypeError, ValueError, OSError) as exc:
+        sys.exit(f"Liney release check failed: {exc}")
