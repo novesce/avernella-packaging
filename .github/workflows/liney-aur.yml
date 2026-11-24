@@ -37,6 +37,7 @@ jobs:
       - name: Find unpublished stable releases
         id: plan
         env:
+          AUR_MAINTAINER: ${{ vars.AUR_MAINTAINER }}
           GH_TOKEN: ${{ github.token }}
         run: |
           releases=$(python3 liney/pending | jq -c '.[:12]')

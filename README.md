@@ -48,3 +48,5 @@ paru -S liney-bin
 The [Liney workflow](.github/workflows/liney-aur.yml) checks [Cytech Team’s stable releases](https://github.com/Cytech-Team/Liney/releases) every ten minutes, starting with version 0.1.36. Each AUR recipe downloads the upstream x86-64 Debian package and checks its SHA-256 digest. CI builds and checks the Arch package before pushing the recipe to the AUR. When several releases arrive between checks, CI publishes them in version order. GitHub may delay scheduled runs.
 
 To check for releases immediately, run `gh workflow run liney-aur.yml -R novesce/avernella-packaging`.
+
+The workflow checks that the AUR package belongs to `novesce`. After an AUR account rename, set the packaging repository’s Actions variable `AUR_MAINTAINER` to the new username.
