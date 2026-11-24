@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 import http.server
 import os
-import select
-import signal
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
-import time
 
 
 class TestPage(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = (
-            b"<!doctype html><title>Avernella test</title><script>"
-            b"console.log('LIFF bridge ready:', typeof window._liff === 'object')"
-            b"</script>"
-        )
+        body = b"""<!doctype html><title>Avernella test</title><script>
+addEventListener('load', () => {
+    addEventListener('liffEvent', ({detail}) => {
+        if (detail.type === 'packagingProbe' && detail.callbackId === 'smoke1'
+                && detail.error?.code === 'FORBIDDEN') {
+            alert('packaging probe complete');
+        }
+    });
+    window._liff.postMessage('packagingProbe', '', 'smoke1', '{}');
+});
+</script>"""
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.send_header("Content-Length", str(len(body)))
@@ -29,45 +33,37 @@ class TestPage(http.server.BaseHTTPRequestHandler):
 
 def check(binary, server, data):
     client, helper = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
-    read_fd, write_fd = os.pipe()
     env = os.environ | {
         "LINE_DEBUG_LIFF": "1",
         "XDG_DATA_HOME": data,
         "XDG_CACHE_HOME": data,
     }
-    with client, helper, os.fdopen(read_fd, "rb", buffering=0) as output:
-        try:
-            pid = os.posix_spawn(binary, [binary, str(os.getpid())], env,
-                                 file_actions=[
-                                     (os.POSIX_SPAWN_DUP2, helper.fileno(), 3),
-                                     (os.POSIX_SPAWN_DUP2, write_fd, 2),
-                                 ])
-        finally:
-            os.close(write_fd)
+    # The helper takes the UI's SOCK_SEQPACKET connection on fd 3.
+    with client, helper, subprocess.Popen(
+        ["sh", "-c", 'exec 3<&0; exec "$@"', "liff-smoke", binary, str(os.getpid())],
+        stdin=helper, env=env,
+    ) as browser:
         helper.close()
         try:
             client.settimeout(15)
             if client.recv(128) != b"B\tready":
                 raise RuntimeError("LIFF helper did not report readiness")
             client.sendall(f"L\tcompact\thttp://127.0.0.1:{server.server_port}/".encode())
-            deadline = time.monotonic() + 15
-            log = b""
-            while select.select([output], [], [], max(0, deadline - time.monotonic()))[0]:
-                data = output.read(4096)
-                if not data:
-                    break
-                log += data
-                if b"LIFF bridge ready: true" in log:
-                    print("LIFF helper loaded the test page and initialized the bridge.")
-                    return
-            raise RuntimeError(f"LIFF test page did not initialize.\n{log.decode(errors='replace')}")
-        finally:
-            client.close()
             try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            os.waitpid(pid, 0)
+                fields = client.recv(1024).split(b"\t", 3)
+            except TimeoutError:
+                raise RuntimeError("Timed out waiting for the LIFF bridge reply") from None
+            if (len(fields) != 4 or fields[0] != b"D" or not fields[1].isdigit()
+                    or fields[2:] != [b"a", b"packaging probe complete"]):
+                raise RuntimeError("LIFF bridge did not return the expected test dialog")
+            client.sendall(b"R\t" + fields[1] + b"\t1")
+            client.close()
+            if browser.wait(timeout=10) != 0:
+                raise RuntimeError("LIFF helper exited unsuccessfully")
+        finally:
+            if browser.poll() is None:
+                browser.kill()
+    print("LIFF helper completed the test page's native bridge round trip.")
 
 
 with tempfile.TemporaryDirectory(prefix="avernella-liff-test-") as profile:
