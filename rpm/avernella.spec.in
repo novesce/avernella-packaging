@@ -1,0 +1,32 @@
+%global debug_package %{nil}
+%global _build_id_links none
+
+Name:           avernella
+Version:        @VERSION@
+Release:        @RELEASE@%{?dist}
+Summary:        Independent Linux desktop client compatible with LINE
+
+License:        GPL-3.0-or-later AND MIT AND BSD-3-Clause
+URL:            https://github.com/novesce/avernella
+
+Recommends:     xdg-desktop-portal
+Recommends:     vulkan-loader
+Suggests:       ffmpeg-free
+
+%description
+Avernella is an independent native C Linux desktop client compatible with LINE
+personal accounts. Includes the native Vulkan renderer module and the in-app
+LIFF browser helper.
+
+Built from https://github.com/novesce/avernella/commit/@COMMIT@.
+
+%install
+cp -a %{_sourcedir}/root/. %{buildroot}/
+
+%files
+%license /usr/share/licenses/avernella/*
+/usr/bin/avernella
+/usr/lib/avernella/
+/usr/share/applications/avernella.desktop
+/usr/share/icons/hicolor/64x64/apps/avernella.png
+/usr/share/icons/hicolor/256x256/apps/avernella.png

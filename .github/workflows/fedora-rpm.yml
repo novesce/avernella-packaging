@@ -1,0 +1,193 @@
+name: Build Avernella Fedora RPM repository
+
+on:
+  push:
+    branches: [main]
+    tags: ['avernella-source-*']
+    paths-ignore:
+      - 'liney/**'
+      - 'aur/**'
+      - 'flatpak/**'
+      - 'patches/**'
+      - 'scripts/flatpak-recipe'
+      - '.github/workflows/liney-aur.yml'
+      - '.github/workflows/packages.yml'
+      - '.github/workflows/flatpak.yml'
+  schedule:
+    - cron: '17,37,57 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: avernella-fedora-rpm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      sha: ${{ steps.check.outputs.sha }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check latest Avernella commit
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
+          sha=$(git -C upstream rev-parse HEAD)
+          revision=$(git -C upstream rev-list --count HEAD)
+          version="0.1^git${revision}.${sha:0:7}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          published=$(gh release view rpm-latest --json body --jq '.body' 2>/dev/null || true)
+          if [[ "$published" != *"$sha"* || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
+              ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Fedora RPM repository is already up to date at $version ($sha)."
+          fi
+
+  build:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['41', '42', '43']
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:${{ matrix.fedora }}
+    timeout-minutes: 35
+    steps:
+      - name: Install Fedora build dependencies
+        run: |
+          dnf install -y \
+            git gcc make binutils pkgconf-pkg-config curl tar xz patch \
+            cmake ninja-build autoconf automake libtool \
+            rpm-build createrepo_c desktop-file-utils \
+            glslang spirv-tools vulkan-loader \
+            'pkgconfig(sdl2)' \
+            'pkgconfig(pangocairo)' \
+            'pkgconfig(glib-2.0)' \
+            'pkgconfig(gio-2.0)' \
+            'pkgconfig(gio-unix-2.0)' \
+            'pkgconfig(libqrencode)' \
+            'pkgconfig(libcurl)' \
+            'pkgconfig(libcrypto)' \
+            'pkgconfig(libturbojpeg)' \
+            'pkgconfig(libpng)' \
+            'pkgconfig(libwebp)' \
+            'pkgconfig(opus)' \
+            'pkgconfig(libsrtp2)' \
+            'pkgconfig(zlib)' \
+            'pkgconfig(vpx)' \
+            'pkgconfig(libpipewire-0.3)' \
+            'pkgconfig(libseccomp)' \
+            'pkgconfig(zbar)' \
+            'pkgconfig(webkitgtk-6.0)'
+          dnf install -y ffmpeg-free-devel || true
+          dnf install -y wpewebkit-devel || true
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Build and smoke-test Fedora ${{ matrix.fedora }} RPM
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
+          git -C upstream checkout --quiet --detach "$SHA"
+          scripts/rpm upstream "out/fc${{ matrix.fedora }}"
+
+      - name: Upload Fedora ${{ matrix.fedora }} RPM artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-rpm-fc${{ matrix.fedora }}
+          path: out/fc${{ matrix.fedora }}/avernella-*.rpm
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [plan, build]
+    if: needs.plan.outputs.build == 'true'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Download built RPMs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: avernella-rpm-fc*
+          path: out/artifacts
+
+      - name: Install createrepo_c
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends createrepo-c
+
+      - name: Build DNF repository metadata
+        run: |
+          mkdir -p out/rpm-site out/release
+          for dir in out/artifacts/avernella-rpm-fc*; do
+            rel="${dir##*fc}"
+            arch_dir="out/rpm-site/fedora/${rel}/x86_64"
+            mkdir -p "$arch_dir"
+            cp -f "$dir"/avernella-*.rpm "$arch_dir/"
+            cp -f "$dir"/avernella-*.rpm out/release/
+            createrepo_c --simple-md-filenames "$arch_dir"
+          done
+          (cd out/release && sha256sum avernella-*.rpm > SHA256SUMS)
+          ls -la out/release
+
+      - name: Publish RPMs to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          notes="Fedora x86_64 RPM packages for Avernella ${VERSION} (https://github.com/novesce/avernella/commit/${SHA}).
+
+          Install via the auto-updating DNF repository:
+          \`\`\`sh
+          sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
+          sudo dnf install -y avernella
+          \`\`\`"
+          if gh release view rpm-latest >/dev/null 2>&1; then
+            for old in $(gh release view rpm-latest --json assets --jq '.assets[].name'); do
+              gh release delete-asset rpm-latest "$old" -y
+            done
+            gh release edit rpm-latest --title "Avernella Fedora RPM (${VERSION})" --notes "$notes"
+            gh release upload rpm-latest --clobber out/release/avernella-*.rpm out/release/SHA256SUMS
+          else
+            gh release create rpm-latest --latest=false \
+              --title "Avernella Fedora RPM (${VERSION})" --notes "$notes" \
+              out/release/avernella-*.rpm out/release/SHA256SUMS
+          fi
+          if gh release view "avernella-$SHA" >/dev/null 2>&1; then
+            gh release upload "avernella-$SHA" --clobber out/release/avernella-*.rpm
+          fi
+
+      - name: Publish DNF repository to GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          scripts/publish-gh-pages rpm out/rpm-site "$VERSION" "$SHA"

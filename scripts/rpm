@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+src=$(realpath "${1:?Path to an Avernella checkout is required}")
+out=$(realpath -m "${2:?Output directory is required}")
+packaging=$(realpath "$(dirname "$0")/..")
+
+commit=$(git -C "$src" rev-parse HEAD)
+revision=$(git -C "$src" rev-list --count HEAD)
+# RPM Version: 0.1^git<rev>.<sha> sorts cleanly above 0.1 in RPM/DNF.
+version="0.1^git${revision}.${commit:0:7}"
+export SOURCE_DATE_EPOCH=$(git -C "$src" log -1 --format=%ct)
+
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+
+# Build pinned static json-c 0.19, rnnoise 0.2, and Vulkan SDK headers/volk.
+"$packaging/scripts/json-c" "$scratch/json-c"
+"$packaging/scripts/rnnoise" "$scratch/rnnoise"
+"$packaging/scripts/vulkan-sdk" "$scratch/vulkan"
+
+export PKG_CONFIG_PATH="$scratch/json-c/lib/pkgconfig:$scratch/rnnoise/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+pkg-config --exists webkitgtk-6.0 rnnoise
+pkg-config --atleast-version=0.19 json-c
+
+make -C "$src" CC=gcc LIFF_BROWSER=1 LIFF_GTK=1 NATIVE_VULKAN=1 \
+    VOLK_DIR="$scratch/vulkan/volk" \
+    VK_HEADERS="$scratch/vulkan/headers/include" all
+
+topdir="$scratch/rpmbuild"
+root="$topdir/SOURCES/root"
+licenses="$root/usr/share/licenses/avernella"
+mkdir -p "$topdir"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS} "$licenses" "$out"
+
+make -C "$src" install DESTDIR="$root" PREFIX=/usr
+install -m644 "$src/LICENSE" "$licenses/LICENSE"
+install -m644 "$src"/analysis/*-LICENSE "$licenses/"
+install -m644 "$scratch/json-c/COPYING" "$licenses/json-c-COPYING"
+install -m644 "$scratch/rnnoise/COPYING" "$licenses/rnnoise-COPYING"
+install -m644 "$scratch/vulkan/volk/LICENSE.md" "$licenses/volk-LICENSE.md"
+install -m644 "$scratch/vulkan/headers/LICENSES/MIT.txt" "$licenses/vulkan-headers-MIT.txt"
+printf '%s\n' "$commit" > "$licenses/source-commit"
+
+desktop-file-validate "$root/usr/share/applications/avernella.desktop"
+
+sed -e "s|@VERSION@|${version}|g" \
+    -e "s|@RELEASE@|1|g" \
+    -e "s|@COMMIT@|${commit}|g" \
+    "$packaging/rpm/avernella.spec.in" > "$topdir/SPECS/avernella.spec"
+
+rpmbuild --define "_topdir $topdir" -bb "$topdir/SPECS/avernella.spec"
+
+rpm_path=$(find "$topdir/RPMS" -type f -name 'avernella-*.rpm' | head -n 1)
+test -n "$rpm_path"
+rpm_name=$(basename "$rpm_path")
+cp -f "$rpm_path" "$out/$rpm_name"
+printf '%s\n' "$rpm_name" > "$out/rpm-name"
+printf '%s\n' "$version" > "$out/version"
+
+# Smoke-test the produced RPM by installing it cleanly and checking binaries.
+dnf install -y --setopt=install_weak_deps=False "$out/$rpm_name"
+/usr/bin/avernella --help
+test -x /usr/lib/avernella/avernella-liff-gtk
+test -f /usr/lib/avernella/avernella-vulkan.so
+for bin in /usr/bin/avernella /usr/lib/avernella/avernella-liff-gtk /usr/lib/avernella/avernella-vulkan.so; do
+    if ldd "$bin" | grep -q 'not found'; then
+        echo "Unresolved shared library in $bin:" >&2
+        ldd "$bin" >&2
+        exit 1
+    fi
+done
+if [[ -x /usr/lib/avernella/avernella-liff ]]; then
+    if ldd /usr/lib/avernella/avernella-liff | grep -q 'not found'; then
+        echo "Unresolved shared library in /usr/lib/avernella/avernella-liff" >&2
+        exit 1
+    fi
+fi

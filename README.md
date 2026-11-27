@@ -27,6 +27,19 @@ makepkg -si
 
 The recipe fetches the x86-64 Ubuntu release from GitHub, verifies its SHA-256 checksum and installs its payload as an Arch package. The dependencies include the precise libvpx and OpenSSL library versions used by that release.
 
+## Fedora (RPM / DNF repository)
+
+Install from the auto-updating Fedora DNF repository (Fedora 41, 42, and 43, `x86_64` — updates on every Avernella commit):
+
+```sh
+sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
+sudo dnf install -y avernella
+```
+
+To update later, run `sudo dnf upgrade avernella`. Standalone `.rpm` files are also published to the [`rpm-latest` release](https://github.com/novesce/avernella-packaging/releases/tag/rpm-latest).
+
+The [Fedora RPM workflow](.github/workflows/fedora-rpm.yml) builds Avernella natively inside official Fedora 41, 42, and 43 containers with the native Vulkan renderer and WebKitGTK 6.0 LIFF browser (plus WPE WebKit when available), smoke-tests the installed RPM, publishes standalone `.rpm` packages to Releases, and updates the DNF repository on GitHub Pages.
+
 ## Flatpak (GNOME 49 runtime, with LIFF browser)
 
 Install from the auto-updating Flatpak repository (updates on every Avernella commit):

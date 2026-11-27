@@ -8,8 +8,12 @@ on:
       - 'liney/**'
       - '.github/workflows/liney-aur.yml'
       - 'flatpak/**'
+      - 'rpm/**'
       - 'scripts/flatpak-recipe'
+      - 'scripts/rpm'
+      - 'scripts/publish-gh-pages'
       - '.github/workflows/flatpak.yml'
+      - '.github/workflows/fedora-rpm.yml'
   schedule:
     - cron: '7,27,47 * * * *'
   workflow_dispatch:

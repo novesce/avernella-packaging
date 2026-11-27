@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:?Usage: publish-gh-pages <flatpak|rpm> <payload-dir> <version> <sha>}"
+payload=$(realpath "${2:?Payload directory is required}")
+version="${3:?Version is required}"
+sha="${4:?Commit SHA is required}"
+repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
+token="${GH_TOKEN:?GH_TOKEN is required}"
+remote="https://x-access-token:${token}@github.com/${repo}.git"
+
+if [[ "$mode" != "flatpak" && "$mode" != "rpm" ]]; then
+    echo "Unknown mode: $mode" >&2
+    exit 1
+fi
+
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+
+write_site_files() {
+    local dir="$1"
+    touch "$dir/.nojekyll"
+    if [[ "$mode" == "flatpak" ]]; then
+        rm -rf "$dir/repo"
+        cp -a "$payload" "$dir/repo"
+        cat > "$dir/avernella.flatpakrepo" <<'REPO'
+[Flatpak Repo]
+Title=Avernella
+Comment=Avernella desktop client for LINE
+Url=https://novesce.github.io/avernella-packaging/repo
+Homepage=https://github.com/novesce/avernella
+REPO
+    else
+        rm -rf "$dir/rpm"
+        cp -a "$payload" "$dir/rpm"
+        cat > "$dir/avernella.repo" <<'REPO'
+[avernella]
+name=Avernella for Fedora $releasever ($basearch)
+baseurl=https://novesce.github.io/avernella-packaging/rpm/fedora/$releasever/$basearch/
+enabled=1
+gpgcheck=0
+REPO
+    fi
+
+    cat > "$dir/index.html" <<HTML
+<!doctype html>
+<meta charset="utf-8">
+<title>Avernella Package Repositories</title>
+<h1>Avernella Package Repositories</h1>
+<p>Latest published build: <code>${version}</code> (<a href="https://github.com/novesce/avernella/commit/${sha}">${sha:0:7}</a>)</p>
+
+<h2>Fedora (DNF / RPM Repository)</h2>
+<pre>sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
+sudo dnf install -y avernella</pre>
+
+<h2>Flatpak (GNOME 49 Runtime)</h2>
+<pre>flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak remote-add --user --no-gpg-verify --if-not-exists avernella https://novesce.github.io/avernella-packaging/repo
+flatpak install --user avernella io.github.novesce.Avernella</pre>
+HTML
+}
+
+for attempt in 1 2 3 4 5; do
+    site="$scratch/site-$attempt"
+    mkdir -p "$site"
+    if git clone --quiet --depth=1 --branch gh-pages "$remote" "$site" 2>/dev/null; then
+        :
+    else
+        git -C "$site" init --quiet -b gh-pages
+        git -C "$site" remote add origin "$remote"
+    fi
+    git -C "$site" config user.name "github-actions[bot]"
+    git -C "$site" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+    write_site_files "$site"
+    git -C "$site" add -A
+    if git -C "$site" diff --cached --quiet; then
+        echo "gh-pages already up to date for $mode ($version)."
+        exit 0
+    fi
+    git -C "$site" commit --quiet -m "Publish ${mode} repository for Avernella ${version}"
+    if git -C "$site" push origin gh-pages:gh-pages; then
+        exit 0
+    fi
+    echo "Push conflict on gh-pages (attempt $attempt); retrying..."
+    sleep "$((attempt * 2))"
+done
+
+echo "Failed to push gh-pages after 5 attempts." >&2
+exit 1
