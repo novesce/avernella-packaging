@@ -62,7 +62,7 @@ jobs:
         if: steps.plan.outputs.build == 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak desktop-file-utils
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder desktop-file-utils
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub \
@@ -83,7 +83,7 @@ jobs:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
           mkdir -p out/flatpak
-          flatpak run org.flatpak.Builder \
+          flatpak-builder \
             --force-clean \
             --sandbox \
             --user \
