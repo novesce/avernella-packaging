@@ -67,8 +67,6 @@ modules:
       - -Dtests=disabled
       - -Dpcap-tests=disabled
       - -Ddoc=disabled
-    post-install:
-      - install -Dm644 LICENSE /app/share/licenses/libsrtp/LICENSE
     sources:
       - type: archive
         url: https://github.com/cisco/libsrtp/archive/refs/tags/v2.8.1.tar.gz
