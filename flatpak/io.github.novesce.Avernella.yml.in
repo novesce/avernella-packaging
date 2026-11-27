@@ -133,7 +133,7 @@ modules:
         chmod +x build-glslang.sh
       - >-
         make -j"${FLATPAK_BUILDER_N_JOBS}" CC=gcc
-        GLSLANG=./build-glslang.sh
+        GLSLANG=./build-glslang.sh SPIRV_VAL=true
         LIFF_BROWSER=1 LIFF_GTK=1 NATIVE_VULKAN=1 STRIP_RELEASE=
         VOLK_DIR=deps/volk VK_HEADERS=deps/vulkan-headers/include all
       - install -Dm755 avernella /app/bin/avernella
