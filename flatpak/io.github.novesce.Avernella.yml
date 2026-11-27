@@ -12,6 +12,9 @@ finish-args:
   - --device=all
   - --talk-name=org.freedesktop.Notifications
   - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.StatusNotifierWatcher
+  - --own-name=io.github.novesce.Avernella.StatusNotifierItem
+  - --talk-name=org.freedesktop.portal.Desktop
   - --filesystem=xdg-download
   - --filesystem=xdg-pictures:ro
   - --filesystem=xdg-videos:ro
