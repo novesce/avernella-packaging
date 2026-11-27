@@ -96,8 +96,31 @@ modules:
     build-commands:
       - pkg-config --atleast-version=0.19 json-c
       - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode
+      - |
+        cat > build-glslang.sh <<'EOF'
+        #!/bin/sh
+        set -e
+        args=""
+        out=""
+        prev=""
+        for a in "$@"; do
+          if [ "$prev" = "-o" ]; then
+            out="$a"
+          fi
+          prev="$a"
+          if [ "$a" != "-Os" ]; then
+            args="$args $a"
+          fi
+        done
+        glslangValidator $args
+        if [ -n "$out" ] && command -v spirv-opt >/dev/null 2>&1; then
+          spirv-opt -Os "$out" -o "$out.opt" && mv "$out.opt" "$out"
+        fi
+        EOF
+        chmod +x build-glslang.sh
       - >-
         make -j"${FLATPAK_BUILDER_N_JOBS}" CC=gcc
+        GLSLANG=./build-glslang.sh
         LIFF_BROWSER=0 NATIVE_VULKAN=1 STRIP_RELEASE=
         VOLK_DIR=deps/volk VK_HEADERS=deps/vulkan-headers/include all
       - install -Dm755 avernella /app/bin/avernella
