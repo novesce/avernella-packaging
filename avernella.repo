@@ -1,0 +1,5 @@
+[avernella]
+name=Avernella for Fedora ($basearch)
+baseurl=https://novesce.github.io/avernella-packaging/rpm/fedora/$basearch/
+enabled=1
+gpgcheck=0
