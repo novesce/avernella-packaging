@@ -58,7 +58,7 @@ jobs:
           scripts/flatpak-recipe upstream flatpak
           git diff --stat -- flatpak/
 
-      - name: Install Flatpak and KDE 6.11 runtime
+      - name: Install Flatpak and GNOME 49 runtime
         if: steps.plan.outputs.build == 'true'
         run: |
           sudo apt-get update
@@ -66,8 +66,8 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub \
-            org.kde.Platform//6.11 \
-            org.kde.Sdk//6.11
+            org.gnome.Platform//49 \
+            org.gnome.Sdk//49
 
       - name: Validate desktop file and metainfo
         if: steps.plan.outputs.build == 'true'
@@ -75,7 +75,7 @@ jobs:
           desktop-file-validate flatpak/io.github.novesce.Avernella.desktop
           appstreamcli validate --no-net flatpak/io.github.novesce.Avernella.metainfo.xml
 
-      - name: Build Flatpak bundle
+      - name: Build Flatpak repo and bundle
         if: steps.plan.outputs.build == 'true'
         env:
           VERSION: ${{ steps.plan.outputs.version }}
@@ -90,6 +90,7 @@ jobs:
             --repo=out/flatpak/repo \
             out/flatpak/build \
             flatpak/io.github.novesce.Avernella.yml
+          flatpak build-update-repo --prune --prune-depth=1 out/flatpak/repo
           bundle="avernella_${VERSION}_x86_64.flatpak"
           flatpak build-bundle out/flatpak/repo "out/flatpak/$bundle" \
             io.github.novesce.Avernella \
@@ -104,6 +105,7 @@ jobs:
           flatpak run io.github.novesce.Avernella --help
           flatpak run --command=sh io.github.novesce.Avernella -c '
             set -e
+            test -x /app/lib/avernella/avernella-liff-gtk
             test -f /app/lib/avernella/avernella-vulkan.so
             test -f /app/lib/libzbar.so.0
             command -v ffmpeg ffplay >/dev/null
@@ -127,7 +129,7 @@ jobs:
           SHA: ${{ steps.plan.outputs.sha }}
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
-          notes="KDE 6.11 runtime Flatpak for Avernella $VERSION (https://github.com/novesce/avernella/commit/$SHA). Install with: flatpak install --user ./$bundle"
+          notes="GNOME 49 runtime Flatpak (with WebKitGTK LIFF browser) for Avernella $VERSION (https://github.com/novesce/avernella/commit/$SHA). Install with: flatpak install --user ./$bundle"
           if gh release view flatpak-latest >/dev/null 2>&1; then
             for old in $(gh release view flatpak-latest --json assets --jq '.assets[].name'); do
               gh release delete-asset flatpak-latest "$old" -y
@@ -144,6 +146,41 @@ jobs:
             gh release upload "avernella-$SHA" --clobber \
               "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
           fi
+
+      - name: Publish Flatpak OSTree repository to GitHub Pages
+        if: steps.plan.outputs.build == 'true'
+        env:
+          SHA: ${{ steps.plan.outputs.sha }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          site="$PWD/out/flatpak/gh-pages"
+          rm -rf "$site"
+          mkdir -p "$site"
+          cp -a out/flatpak/repo "$site/repo"
+          touch "$site/.nojekyll"
+          cat > "$site/avernella.flatpakrepo" <<'REPO'
+          [Flatpak Repo]
+          Title=Avernella
+          Comment=Avernella desktop client for LINE
+          Url=https://novesce.github.io/avernella-packaging/repo
+          Homepage=https://github.com/novesce/avernella
+          REPO
+          cat > "$site/index.html" <<HTML
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Avernella Flatpak Repository</title>
+          <h1>Avernella Flatpak Repository</h1>
+          <p>Latest build: <code>${VERSION}</code> (<a href="https://github.com/novesce/avernella/commit/${SHA}">${SHA:0:7}</a>)</p>
+          <pre>flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak remote-add --user --no-gpg-verify --if-not-exists avernella https://novesce.github.io/avernella-packaging/repo
+          flatpak install --user avernella io.github.novesce.Avernella</pre>
+          HTML
+          git -C "$site" init -b gh-pages
+          git -C "$site" config user.name "github-actions[bot]"
+          git -C "$site" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$site" add -A
+          git -C "$site" commit -m "Publish Flatpak repository for Avernella $VERSION"
+          git -C "$site" push --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages:gh-pages
 
       - name: Commit updated Flatpak manifest to main
         if: steps.plan.outputs.build == 'true'

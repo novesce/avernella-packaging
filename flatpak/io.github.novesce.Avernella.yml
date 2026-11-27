@@ -1,7 +1,7 @@
 id: io.github.novesce.Avernella
-runtime: org.kde.Platform
-runtime-version: '6.11'
-sdk: org.kde.Sdk
+runtime: org.gnome.Platform
+runtime-version: '49'
+sdk: org.gnome.Sdk
 command: avernella
 finish-args:
   - --share=ipc
@@ -91,11 +91,24 @@ modules:
         url: https://github.com/mchehab/zbar/archive/refs/tags/0.23.93.tar.gz
         sha256: 212dfab527894b8bcbcc7cd1d43d63f5604a07473d31a5f02889e372614ebe28
 
+  - name: libqrencode
+    buildsystem: simple
+    build-commands:
+      - autoreconf -fi
+      - ./configure --prefix=/app --libdir=/app/lib --enable-shared --disable-static --without-tools
+      - make -j"${FLATPAK_BUILDER_N_JOBS}"
+      - make install
+      - install -Dm644 COPYING /app/share/licenses/libqrencode/COPYING
+    sources:
+      - type: archive
+        url: https://github.com/fukuchi/libqrencode/archive/refs/tags/v4.1.1.tar.gz
+        sha256: 5385bc1b8c2f20f3b91d258bf8ccc8cf62023935df2d2676b5b67049f31a049c
+
   - name: avernella
     buildsystem: simple
     build-commands:
       - pkg-config --atleast-version=0.19 json-c
-      - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode
+      - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode webkitgtk-6.0
       - |
         cat > build-glslang.sh <<'EOF'
         #!/bin/sh
@@ -121,9 +134,10 @@ modules:
       - >-
         make -j"${FLATPAK_BUILDER_N_JOBS}" CC=gcc
         GLSLANG=./build-glslang.sh
-        LIFF_BROWSER=0 NATIVE_VULKAN=1 STRIP_RELEASE=
+        LIFF_BROWSER=1 LIFF_GTK=1 NATIVE_VULKAN=1 STRIP_RELEASE=
         VOLK_DIR=deps/volk VK_HEADERS=deps/vulkan-headers/include all
       - install -Dm755 avernella /app/bin/avernella
+      - install -Dm755 avernella-liff-gtk /app/lib/avernella/avernella-liff-gtk
       - install -Dm644 avernella-vulkan.so /app/lib/avernella/avernella-vulkan.so
       - install -Dm644 io.github.novesce.Avernella.desktop /app/share/applications/io.github.novesce.Avernella.desktop
       - install -Dm644 io.github.novesce.Avernella.metainfo.xml /app/share/metainfo/io.github.novesce.Avernella.metainfo.xml

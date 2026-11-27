@@ -27,25 +27,32 @@ makepkg -si
 
 The recipe fetches the x86-64 Ubuntu release from GitHub, verifies its SHA-256 checksum and installs its payload as an Arch package. The dependencies include the precise libvpx and OpenSSL library versions used by that release.
 
-## Flatpak (KDE 6.11 runtime)
+## Flatpak (GNOME 49 runtime, with LIFF browser)
 
-Download the latest single-file `.flatpak` bundle from the [`flatpak-latest` release](https://github.com/novesce/avernella-packaging/releases/tag/flatpak-latest) (built on `org.kde.Platform//6.11`) and install it:
+Install from the auto-updating Flatpak repository (updates on every Avernella commit):
 
 ```sh
 flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install --user ./avernella_*_x86_64.flatpak
+flatpak remote-add --user --no-gpg-verify --if-not-exists avernella https://novesce.github.io/avernella-packaging/repo
+flatpak install --user avernella io.github.novesce.Avernella
 flatpak run io.github.novesce.Avernella
+```
+
+To update later, run `flatpak update --user`. Or download the standalone `.flatpak` file directly from the [`flatpak-latest` release](https://github.com/novesce/avernella-packaging/releases/tag/flatpak-latest) and install it with:
+
+```sh
+flatpak install --user ./avernella_*_x86_64.flatpak
 ```
 
 To build locally from the manifest in [`flatpak/io.github.novesce.Avernella.yml`](flatpak/io.github.novesce.Avernella.yml):
 
 ```sh
-flatpak install --user flathub org.kde.Platform//6.11 org.kde.Sdk//6.11
+flatpak install --user flathub org.gnome.Platform//49 org.gnome.Sdk//49
 flatpak-builder --force-clean --user --install \
   out/flatpak-build flatpak/io.github.novesce.Avernella.yml
 ```
 
-The [Flatpak workflow](.github/workflows/flatpak.yml) runs on every Avernella commit (via `avernella-source-*` tags and a scheduled check), updates `flatpak/io.github.novesce.Avernella.yml` and `flatpak/io.github.novesce.Avernella.metainfo.xml` via `scripts/flatpak-recipe`, builds and smoke-tests the installed app, and publishes a fresh `.flatpak` bundle.
+The [Flatpak workflow](.github/workflows/flatpak.yml) runs on every Avernella commit (via `avernella-source-*` tags and a scheduled check), updates `flatpak/io.github.novesce.Avernella.yml` and `flatpak/io.github.novesce.Avernella.metainfo.xml` via `scripts/flatpak-recipe`, builds Avernella with the WebKitGTK 6.0 LIFF browser and native Vulkan renderer, smoke-tests the installed app, publishes a fresh `.flatpak` bundle to Releases, and updates the Flatpak OSTree repository on GitHub Pages.
 
 ## Publishing
 
