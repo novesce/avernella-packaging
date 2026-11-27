@@ -1,0 +1,169 @@
+name: Build Avernella Flatpak
+
+on:
+  push:
+    branches: [main]
+    tags: ['avernella-source-*']
+    paths-ignore:
+      - 'liney/**'
+      - 'aur/**'
+      - 'patches/**'
+      - '.github/workflows/liney-aur.yml'
+      - '.github/workflows/packages.yml'
+  schedule:
+    - cron: '12,32,52 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: avernella-flatpak
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  flatpak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: main
+
+      - name: Check latest Avernella commit
+        id: plan
+        run: |
+          git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
+          sha=$(git -C upstream rev-parse HEAD)
+          revision=$(git -C upstream rev-list --count HEAD)
+          version="0.1+git${revision}.${sha:0:7}"
+          pinned=$(sed -nE 's/^[[:space:]]*commit:[[:space:]]*([0-9a-f]{40})$/\1/p' \
+            flatpak/io.github.novesce.Avernella.yml | tail -n 1 || true)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$pinned" != "$sha" || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
+              ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Flatpak manifest is already up to date at $version ($sha)."
+          fi
+
+      - name: Update Flatpak manifest and metainfo
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          scripts/flatpak-recipe upstream flatpak
+          git diff --stat -- flatpak/
+
+      - name: Install Flatpak and KDE 6.11 runtime
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak desktop-file-utils
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.flatpak.Builder \
+            org.kde.Platform//6.11 \
+            org.kde.Sdk//6.11
+
+      - name: Lint Flatpak manifest and desktop file
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          desktop-file-validate flatpak/io.github.novesce.Avernella.desktop
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+            manifest flatpak/io.github.novesce.Avernella.yml
+
+      - name: Build Flatpak and run Flathub repo linter
+        if: steps.plan.outputs.build == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          mkdir -p out/flatpak
+          flatpak run org.flatpak.Builder \
+            --force-clean \
+            --sandbox \
+            --user \
+            --install-deps-from=flathub \
+            --ccache \
+            --repo=out/flatpak/repo \
+            --mirror-screenshots-url=https://dl.flathub.org/media \
+            --compose-url-policy=full \
+            out/flatpak/build \
+            flatpak/io.github.novesce.Avernella.yml
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
+            repo out/flatpak/repo
+          bundle="avernella_${VERSION}_x86_64.flatpak"
+          flatpak build-bundle out/flatpak/repo "out/flatpak/$bundle" \
+            io.github.novesce.Avernella \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+          (cd out/flatpak && sha256sum "$bundle" > "${bundle}.sha256")
+          echo "bundle=$bundle" >> "$GITHUB_ENV"
+
+      - name: Smoke-test installed Flatpak
+        if: steps.plan.outputs.build == 'true'
+        run: |
+          flatpak install --user -y --noninteractive "out/flatpak/$bundle"
+          flatpak run io.github.novesce.Avernella --help
+          flatpak run --command=sh io.github.novesce.Avernella -c '
+            set -e
+            test -f /app/lib/avernella/avernella-vulkan.so
+            test -f /app/lib/libzbar.so.0
+            command -v ffmpeg ffplay >/dev/null
+          '
+
+      - name: Upload Flatpak bundle artifact
+        if: steps.plan.outputs.build == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-flatpak-${{ steps.plan.outputs.version }}
+          path: |
+            out/flatpak/${{ env.bundle }}
+            out/flatpak/${{ env.bundle }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish Flatpak bundle to GitHub Releases
+        if: steps.plan.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          notes="KDE 6.11 runtime Flatpak for Avernella $VERSION (https://github.com/novesce/avernella/commit/$SHA). Install with: flatpak install --user ./$bundle"
+          if gh release view flatpak-latest >/dev/null 2>&1; then
+            for old in $(gh release view flatpak-latest --json assets --jq '.assets[].name'); do
+              gh release delete-asset flatpak-latest "$old" -y
+            done
+            gh release edit flatpak-latest --title "Avernella Flatpak ($VERSION)" --notes "$notes"
+            gh release upload flatpak-latest --clobber \
+              "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
+          else
+            gh release create flatpak-latest --latest=false \
+              --title "Avernella Flatpak ($VERSION)" --notes "$notes" \
+              "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
+          fi
+          if gh release view "avernella-$SHA" >/dev/null 2>&1; then
+            gh release upload "avernella-$SHA" --clobber \
+              "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
+          fi
+
+      - name: Commit updated Flatpak manifest to main
+        if: steps.plan.outputs.build == 'true'
+        env:
+          SHA: ${{ steps.plan.outputs.sha }}
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          if git diff --quiet -- flatpak/io.github.novesce.Avernella.yml flatpak/io.github.novesce.Avernella.metainfo.xml; then
+            echo "Manifest already matches $SHA."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add flatpak/io.github.novesce.Avernella.yml flatpak/io.github.novesce.Avernella.metainfo.xml
+          git commit -m "Update Flatpak manifest to Avernella $VERSION [skip ci]"
+          git pull --rebase origin main
+          git push origin main

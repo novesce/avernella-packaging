@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+src=$(realpath "${1:?Path to an Avernella checkout is required}")
+out=$(realpath -m "${2:?Flatpak output directory is required}")
+dir=$(realpath "$(dirname "$0")/../flatpak")
+
+commit=$(git -C "$src" rev-parse HEAD)
+revision=$(git -C "$src" rev-list --count HEAD)
+date=$(git -C "$src" log -1 --format=%cs)
+version="0.1+git$revision.${commit:0:7}"
+
+[[ "$commit" =~ ^[a-f0-9]{40}$ ]]
+[[ "$date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+
+mkdir -p "$out"
+sed -e "s/@COMMIT@/$commit/g" -e "s/@VERSION@/$version/g" -e "s/@DATE@/$date/g" \
+    "$dir/io.github.novesce.Avernella.yml.in" > "$out/io.github.novesce.Avernella.yml"
+sed -e "s/@COMMIT@/$commit/g" -e "s/@VERSION@/$version/g" -e "s/@DATE@/$date/g" \
+    "$dir/io.github.novesce.Avernella.metainfo.xml.in" > "$out/io.github.novesce.Avernella.metainfo.xml"
+if [[ "$out" != "$dir" ]]; then
+    install -m644 "$dir/io.github.novesce.Avernella.desktop" \
+        "$out/io.github.novesce.Avernella.desktop"
+    printf '%s\n' "$version" > "$out/version"
+    printf '%s\n' "$commit" > "$out/commit"
+fi

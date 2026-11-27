@@ -9,6 +9,14 @@ gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
 
 git -C "$src" rev-list --reverse --topo-order HEAD |
     while IFS= read -r commit; do
+        # These two historical commits predate 0624846, which detects Ubuntu's
+        # AppArmor unprivileged userns restriction in test-security-sandbox.
+        case "$commit" in
+            39cd697b1b1049d40392af8644be7cece5cd50ff|\
+            8c5b4d1727a3c27f324dbe1ea747e9a5588ecb22)
+                continue
+                ;;
+        esac
         if ! grep -Fxq "avernella-$commit" "$published"; then
             printf '%s\n' "$commit"
         fi

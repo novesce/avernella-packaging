@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.novesce.Avernella</id>
+  <name>Avernella</name>
+  <summary>Independent desktop client compatible with LINE</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.novesce">
+    <name>novesce</name>
+  </developer>
+  <launchable type="desktop-id">io.github.novesce.Avernella.desktop</launchable>
+  <description>
+    <p>
+      Avernella is a native Linux desktop client compatible with LINE personal
+      accounts, built in C with hardware-accelerated rendering, Letter Sealing
+      end-to-end encryption, and Linux kernel sandboxing.
+    </p>
+    <ul>
+      <li>Direct chats, group chats, and OpenChat rooms with live sync</li>
+      <li>Photos, videos, voice messages, files, stickers, LINE emojis, and reactions</li>
+      <li>Voice and video calls with RNNoise denoising and portal screen sharing</li>
+      <li>QR code and email sign-in with desktop notifications and tray integration</li>
+    </ul>
+  </description>
+  <branding>
+    <color type="primary" scheme_preference="light">#f78fb3</color>
+    <color type="primary" scheme_preference="dark">#2b1a29</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/novesce/avernella-packaging/flatpak-screenshots-v1/flatpak/screenshots/welcome.png</image>
+      <caption>Welcome and sign-in screen</caption>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://github.com/novesce/avernella</url>
+  <url type="bugtracker">https://github.com/novesce/avernella/issues</url>
+  <url type="vcs-browser">https://github.com/novesce/avernella</url>
+  <content_rating type="oars-1.1">
+    <content_attribute id="social-chat">intense</content_attribute>
+    <content_attribute id="social-audio">intense</content_attribute>
+    <content_attribute id="social-contacts">intense</content_attribute>
+  </content_rating>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">640</display_length>
+  </requires>
+  <releases>
+    <release version="@VERSION@" date="@DATE@">
+      <url type="details">https://github.com/novesce/avernella/commit/@COMMIT@</url>
+    </release>
+  </releases>
+</component>

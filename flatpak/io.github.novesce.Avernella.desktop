@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Avernella
+GenericName=Chat
+Comment=Independent desktop client compatible with LINE
+Exec=avernella %u
+Icon=io.github.novesce.Avernella
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=LINE;messenger;messaging;
+MimeType=x-scheme-handler/line;x-scheme-handler/lineb;
+StartupNotify=true
+StartupWMClass=avernella

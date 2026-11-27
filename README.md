@@ -27,6 +27,26 @@ makepkg -si
 
 The recipe fetches the x86-64 Ubuntu release from GitHub, verifies its SHA-256 checksum and installs its payload as an Arch package. The dependencies include the precise libvpx and OpenSSL library versions used by that release.
 
+## Flatpak (KDE runtime / Flathub)
+
+Download the latest single-file `.flatpak` bundle from the [`flatpak-latest` release](https://github.com/novesce/avernella-packaging/releases/tag/flatpak-latest) (built on `org.kde.Platform//6.11` for Flathub compatibility) and install it:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./avernella_*_x86_64.flatpak
+flatpak run io.github.novesce.Avernella
+```
+
+To build locally from the manifest in [`flatpak/io.github.novesce.Avernella.yml`](flatpak/io.github.novesce.Avernella.yml):
+
+```sh
+flatpak install --user flathub org.flatpak.Builder org.kde.Platform//6.11 org.kde.Sdk//6.11
+flatpak run org.flatpak.Builder --force-clean --user --install --install-deps-from=flathub \
+  out/flatpak-build flatpak/io.github.novesce.Avernella.yml
+```
+
+The [Flatpak workflow](.github/workflows/flatpak.yml) runs on every Avernella commit (via `avernella-source-*` tags and a scheduled check), updates `flatpak/io.github.novesce.Avernella.yml` and `flatpak/io.github.novesce.Avernella.metainfo.xml` via `scripts/flatpak-recipe`, runs `flatpak-builder-lint` on both the manifest and exported repository, smoke-tests the installed app, and publishes the `.flatpak` bundle.
+
 ## Publishing
 
 The [GitHub Actions workflow](.github/workflows/packages.yml) runs on `ubuntu-latest`. A push to Avernella’s `main` branch queues packaging. A scheduled check picks up any commits that still lack a release, including commits pushed together. Each published release includes the tested `.deb`, corresponding source and SHA-256 checksums. The workflow installs the package on its runner and checks that its browser helper opens a local test page.

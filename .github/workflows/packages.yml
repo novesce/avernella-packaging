@@ -7,6 +7,9 @@ on:
     paths-ignore:
       - 'liney/**'
       - '.github/workflows/liney-aur.yml'
+      - 'flatpak/**'
+      - 'scripts/flatpak-recipe'
+      - '.github/workflows/flatpak.yml'
   schedule:
     - cron: '7,27,47 * * * *'
   workflow_dispatch:

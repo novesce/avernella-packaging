@@ -1,0 +1,129 @@
+id: io.github.novesce.Avernella
+runtime: org.kde.Platform
+runtime-version: '6.11'
+sdk: org.kde.Sdk
+command: avernella
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --device=all
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-download
+  - --filesystem=xdg-pictures:ro
+  - --filesystem=xdg-videos:ro
+  - --filesystem=xdg-documents:ro
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /share/aclocal
+  - /share/doc
+  - /share/man
+  - '*.la'
+  - '*.a'
+modules:
+  - name: json-c
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DBUILD_STATIC_LIBS=OFF
+      - -DBUILD_APPS=OFF
+      - -DBUILD_TESTING=OFF
+    post-install:
+      - install -Dm644 COPYING /app/share/licenses/json-c/COPYING
+    sources:
+      - type: archive
+        url: https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19-nodoc.tar.gz
+        sha256: 704927172443309a8efeb162060bb215548e1286e5568514007dd2cc35a0a164
+
+  - name: rnnoise
+    buildsystem: simple
+    build-commands:
+      - printf 'PACKAGE_VERSION="0.2"\n' > package_version
+      - autoreconf -fi
+      - |
+        rtcd=""
+        if [ "$(uname -m)" = "x86_64" ]; then
+          rtcd="--enable-x86-rtcd"
+        fi
+        ./configure --prefix=/app --libdir=/app/lib --enable-shared --disable-static --disable-examples --disable-doc $rtcd
+      - make -j"${FLATPAK_BUILDER_N_JOBS}"
+      - make install
+      - install -Dm644 COPYING /app/share/licenses/rnnoise/COPYING
+    sources:
+      - type: archive
+        url: https://deb.debian.org/debian/pool/main/r/rnnoise/rnnoise_0.2+ds.orig.tar.xz
+        sha256: db2718ee4a0b294bfbbe198fe94aabfdc8cd0d77cb9cd95d76c7a818ad805f0b
+
+  - name: libsrtp
+    buildsystem: meson
+    config-opts:
+      - -Dcrypto-library=openssl
+      - -Dtests=disabled
+      - -Dpcap-tests=disabled
+      - -Ddoc=disabled
+    post-install:
+      - install -Dm644 LICENSE /app/share/licenses/libsrtp/LICENSE
+    sources:
+      - type: archive
+        url: https://github.com/cisco/libsrtp/archive/refs/tags/v2.8.1.tar.gz
+        sha256: ef5569220749529d778013aae1178391d972570a2b4f7288dda22effa875b07c
+
+  - name: zbar
+    buildsystem: simple
+    build-commands:
+      - autoreconf -fi
+      - >-
+        ./configure --prefix=/app --libdir=/app/lib
+        --enable-shared --disable-static --disable-video --disable-doc
+        --without-x --without-xv --without-xshm --without-gtk --without-gir
+        --without-qt --without-qt6 --without-python --without-java
+        --without-imagemagick --without-graphicsmagick --without-dbus
+        --without-npapi --without-jpeg
+      - make -j"${FLATPAK_BUILDER_N_JOBS}"
+      - make install
+      - install -Dm644 LICENSE.md /app/share/licenses/zbar/LICENSE.md
+    sources:
+      - type: archive
+        url: https://github.com/mchehab/zbar/archive/refs/tags/0.23.93.tar.gz
+        sha256: 212dfab527894b8bcbcc7cd1d43d63f5604a07473d31a5f02889e372614ebe28
+
+  - name: avernella
+    buildsystem: simple
+    build-commands:
+      - pkg-config --atleast-version=0.19 json-c
+      - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode
+      - >-
+        make -j"${FLATPAK_BUILDER_N_JOBS}" CC=gcc
+        LIFF_BROWSER=0 NATIVE_VULKAN=1 STRIP_RELEASE=
+        VOLK_DIR=deps/volk VK_HEADERS=deps/vulkan-headers/include all
+      - install -Dm755 avernella /app/bin/avernella
+      - install -Dm644 avernella-vulkan.so /app/lib/avernella/avernella-vulkan.so
+      - install -Dm644 io.github.novesce.Avernella.desktop /app/share/applications/io.github.novesce.Avernella.desktop
+      - install -Dm644 io.github.novesce.Avernella.metainfo.xml /app/share/metainfo/io.github.novesce.Avernella.metainfo.xml
+      - install -Dm644 data/avernella.png /app/share/icons/hicolor/256x256/apps/io.github.novesce.Avernella.png
+      - install -Dm644 data/avernella-mark.png /app/share/icons/hicolor/64x64/apps/io.github.novesce.Avernella.png
+      - install -Dm644 LICENSE /app/share/licenses/avernella/LICENSE
+      - install -Dm644 deps/volk/LICENSE.md /app/share/licenses/volk/LICENSE.md
+      - install -Dm644 deps/vulkan-headers/LICENSES/MIT.txt /app/share/licenses/vulkan-headers/MIT.txt
+    sources:
+      - type: git
+        url: https://github.com/novesce/avernella.git
+        commit: 56f8a5d9eff593661365f38dbfbd1dae4141bcec
+      - type: archive
+        url: https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/vulkan-sdk-1.4.363.0
+        sha256: 4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e
+        dest: deps/vulkan-headers
+      - type: archive
+        url: https://codeload.github.com/zeux/volk/tar.gz/54fc0d7a72887cbfc5b030d26897b2b40ac53fb8
+        sha256: 4944450dc3943871a28ce993eaf995309eb29e7000e091309968dba4cd321648
+        dest: deps/volk
+      - type: file
+        path: io.github.novesce.Avernella.desktop
+      - type: file
+        path: io.github.novesce.Avernella.metainfo.xml
