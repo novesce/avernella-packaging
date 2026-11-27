@@ -48,8 +48,8 @@
     <display_length compare="ge">640</display_length>
   </requires>
   <releases>
-    <release version="0.1+git77.694b906" date="2026-11-27">
-      <url type="details">https://github.com/novesce/avernella/commit/694b9065255d7b4e75243a18f0af3f54556d8a42</url>
+    <release version="0.1+git78.36065a7" date="2026-11-28">
+      <url type="details">https://github.com/novesce/avernella/commit/36065a7cd787d5cd815224331aea8219ac70b710</url>
     </release>
   </releases>
 </component>
