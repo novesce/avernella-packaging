@@ -67,7 +67,7 @@ jobs:
       - name: Install Fedora 41 build dependencies
         run: |
           dnf install -y \
-            git gcc make binutils pkgconf-pkg-config curl tar xz patch \
+            git gcc make binutils pkgconf-pkg-config curl tar xz patch which diffutils \
             cmake ninja-build autoconf automake libtool nasm perl \
             rpm-build desktop-file-utils \
             glslang spirv-tools vulkan-loader \

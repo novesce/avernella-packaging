@@ -15,7 +15,7 @@ tar -xzf "$archive" -C "$scratch"
 src="$scratch/libvpx-${version}"
 mkdir -p "$scratch/build"
 cd "$scratch/build"
-CC=gcc "$src/configure" \
+CC=gcc AS=nasm "$src/configure" \
     --prefix="$out" \
     --libdir="$out/lib" \
     --enable-pic \
