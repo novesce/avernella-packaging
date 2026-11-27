@@ -117,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ['41', '42', '43', 'rawhide']
+        fedora: ['41', '42', '43', '44', '45']
     runs-on: ubuntu-latest
     container:
       image: fedora:${{ matrix.fedora }}
@@ -131,6 +131,7 @@ jobs:
 
       - name: Install and verify RPM on Fedora ${{ matrix.fedora }}
         run: |
+          cat /etc/fedora-release
           rpm_file=$(ls out/rpm/avernella-*.rpm | head -n 1)
           dnf install -y --setopt=install_weak_deps=False "$rpm_file"
           /usr/bin/avernella --help
