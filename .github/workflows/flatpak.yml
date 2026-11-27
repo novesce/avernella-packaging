@@ -3,8 +3,10 @@ name: Build Avernella Flatpak
 on:
   push:
     branches: [main]
-    tags: ['avernella-source-*']
     paths-ignore:
+      - '.github/workflows/source-formats.yml'
+      - 'scripts/pending-formats'
+      - 'scripts/source-release'
       - 'liney/**'
       - 'aur/**'
       - 'rpm/**'
@@ -13,9 +15,17 @@ on:
       - '.github/workflows/liney-aur.yml'
       - '.github/workflows/packages.yml'
       - '.github/workflows/fedora-rpm.yml'
-  schedule:
-    - cron: '12,32,52 * * * *'
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Source commit on main (defaults to the latest)
+        required: false
+        type: string
 
 concurrency:
   group: avernella-flatpak
@@ -37,32 +47,27 @@ jobs:
         with:
           ref: main
 
-      - name: Check latest Avernella commit
+      - name: Select Avernella source commit
         id: plan
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
-          sha=$(git -C upstream rev-parse HEAD)
+          sha=${SOURCE_SHA:-$(git -C upstream rev-parse HEAD)}
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          git -C upstream merge-base --is-ancestor "$sha" origin/main
+          git -C upstream checkout --quiet --detach "$sha"
           revision=$(git -C upstream rev-list --count HEAD)
           version="0.1+git${revision}.${sha:0:7}"
-          pinned=$(sed -nE 's/^[[:space:]]*commit:[[:space:]]*([0-9a-f]{40})$/\1/p' \
-            flatpak/io.github.novesce.Avernella.yml | tail -n 1 || true)
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          if [[ "$pinned" != "$sha" || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
-              ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Flatpak manifest is already up to date at $version ($sha)."
-          fi
 
       - name: Update Flatpak manifest and metainfo
-        if: steps.plan.outputs.build == 'true'
         run: |
           scripts/flatpak-recipe upstream flatpak
           git diff --stat -- flatpak/
 
       - name: Install Flatpak and GNOME 49 runtime
-        if: steps.plan.outputs.build == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder elfutils appstream desktop-file-utils
@@ -73,13 +78,11 @@ jobs:
             org.gnome.Sdk//49
 
       - name: Validate desktop file and metainfo
-        if: steps.plan.outputs.build == 'true'
         run: |
           desktop-file-validate flatpak/io.github.novesce.Avernella.desktop
           appstreamcli validate --no-net flatpak/io.github.novesce.Avernella.metainfo.xml
 
       - name: Build Flatpak repo and bundle
-        if: steps.plan.outputs.build == 'true'
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
@@ -102,7 +105,6 @@ jobs:
           echo "bundle=$bundle" >> "$GITHUB_ENV"
 
       - name: Smoke-test installed Flatpak
-        if: steps.plan.outputs.build == 'true'
         run: |
           flatpak install --user -y --noninteractive "out/flatpak/$bundle"
           flatpak run io.github.novesce.Avernella --help
@@ -115,7 +117,6 @@ jobs:
           '
 
       - name: Upload Flatpak bundle artifact
-        if: steps.plan.outputs.build == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: avernella-flatpak-${{ steps.plan.outputs.version }}
@@ -125,8 +126,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Check whether this source is still current
+        id: channel
+        env:
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          git -C upstream fetch --quiet origin main
+          if [[ "$(git -C upstream rev-parse origin/main)" == "$SHA" ]]; then
+            echo 'latest=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish Flatpak bundle to GitHub Releases
-        if: steps.plan.outputs.build == 'true'
+        if: steps.channel.outputs.latest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.plan.outputs.sha }}
@@ -145,13 +156,9 @@ jobs:
               --title "Avernella Flatpak ($VERSION)" --notes "$notes" \
               "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
           fi
-          if gh release view "avernella-$SHA" >/dev/null 2>&1; then
-            gh release upload "avernella-$SHA" --clobber \
-              "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
-          fi
 
       - name: Publish Flatpak OSTree repository to GitHub Pages
-        if: steps.plan.outputs.build == 'true'
+        if: steps.channel.outputs.latest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ steps.plan.outputs.sha }}
@@ -160,7 +167,7 @@ jobs:
           scripts/publish-gh-pages flatpak out/flatpak/repo "$VERSION" "$SHA"
 
       - name: Commit updated Flatpak manifest to main
-        if: steps.plan.outputs.build == 'true'
+        if: steps.channel.outputs.latest == 'true'
         env:
           SHA: ${{ steps.plan.outputs.sha }}
           VERSION: ${{ steps.plan.outputs.version }}
@@ -172,6 +179,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add flatpak/io.github.novesce.Avernella.yml flatpak/io.github.novesce.Avernella.metainfo.xml
-          git commit -m "Update Flatpak manifest to Avernella $VERSION [skip ci]"
+          git commit -m "Update Flatpak manifest to Avernella $VERSION"
           git pull --rebase origin main
           git push origin main
+
+      - name: Archive this source revision's Flatpak
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+        run: |
+          scripts/source-release "$SHA"
+          gh release upload "avernella-$SHA" --clobber \
+            "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"

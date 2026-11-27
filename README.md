@@ -65,13 +65,17 @@ flatpak-builder --force-clean --user --install \
   out/flatpak-build flatpak/io.github.novesce.Avernella.yml
 ```
 
-The [Flatpak workflow](.github/workflows/flatpak.yml) runs on every Avernella commit (via `avernella-source-*` tags and a scheduled check), updates `flatpak/io.github.novesce.Avernella.yml` and `flatpak/io.github.novesce.Avernella.metainfo.xml` via `scripts/flatpak-recipe`, builds Avernella with the WebKitGTK 6.0 LIFF browser and native Vulkan renderer, smoke-tests the installed app, publishes a fresh `.flatpak` bundle to Releases, and updates the Flatpak OSTree repository on GitHub Pages.
+The [Flatpak workflow](.github/workflows/flatpak.yml) builds each queued Avernella commit, updates `flatpak/io.github.novesce.Avernella.yml` and `flatpak/io.github.novesce.Avernella.metainfo.xml` via `scripts/flatpak-recipe`, builds Avernella with the WebKitGTK 6.0 LIFF browser and native Vulkan renderer, smoke-tests the installed app, publishes a fresh `.flatpak` bundle to Releases, and updates the Flatpak OSTree repository on GitHub Pages.
 
 ## Publishing
 
 The [GitHub Actions workflow](.github/workflows/packages.yml) runs on `ubuntu-latest`. A push to Avernella’s `main` branch queues packaging. A scheduled check picks up any commits that still lack a release, including commits pushed together. Each published release includes the tested `.deb`, corresponding source and SHA-256 checksums. The workflow installs the package on its runner and checks that its browser helper opens a local test page.
 
-The source repository queues builds through a dedicated deploy key for this packaging repo. The corresponding private key is stored as Avernella’s `PACKAGE_QUEUE_KEY` Actions secret. To retry a build, run `gh workflow run packages.yml -R novesce/avernella-packaging`.
+The source repository uses its `PACKAGE_QUEUE_KEY` deploy key to push an `avernella-source-<SHA>` tag here. The tag points to a fresh commit containing the packaging tree and a build message. This lets Actions start even when the last packaging commit was created with a CI skip directive.
+
+The [desktop format queue](.github/workflows/source-formats.yml) walks upstream history after `d4aaebc` and checks which versioned releases still need an RPM or Flatpak. A multi-commit push schedules each missing source SHA. Each job checks out that SHA and attaches its verified package to the corresponding release. The Debian queue runs independently and checks for the Debian asset, source archive and checksum. Only the current upstream revision updates the rolling RPM and Flatpak channels. The default release and AUR use a verified Debian package.
+
+Scheduled checks reconcile unfinished commits every 20 minutes. To run a check immediately, use `gh workflow run packages.yml -R novesce/avernella-packaging` for Debian and `gh workflow run source-formats.yml -R novesce/avernella-packaging` for RPM and Flatpak.
 
 When a newer release is available, the workflow builds the recipe in a clean Arch container, installs it, checks the executable and browser helpers for unresolved libraries and symbols, and runs `avernella --help`. It pushes the verified `PKGBUILD` and `.SRCINFO` to the AUR using the registered maintainer key in the `AUR_SSH_PRIVATE_KEY` packaging repository secret. To regenerate the recipe locally on Arch, run `scripts/aur-recipe path/to/release.deb FULL_APP_COMMIT output-directory`.
 

@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+"""Plan source SHAs whose RPM or Flatpak release assets are missing."""
+import json
+import os
+import subprocess
+import sys
+
+# The last source release before per-commit desktop builds began.
+LAST_LEGACY_RELEASE = "d4aaebce551217585572a58bc142979689720ea8"
+
+
+def worklist(commits, releases):
+    missing = {"rpm": [], "flatpak": []}
+    for sha in commits:
+        assets = releases.get("avernella-" + sha, set())
+        if not any(a.startswith("avernella-") and
+                   a.endswith(f".{sha[:7]}-1.x86_64.rpm") for a in assets):
+            missing["rpm"].append(sha)
+        if not any(a.startswith("avernella_") and
+                   a.endswith(f".{sha[:7]}_x86_64.flatpak") and
+                   a + ".sha256" in assets for a in assets):
+            missing["flatpak"].append(sha)
+    return missing
+
+
+def main():
+    upstream = sys.argv[1]
+    commits = subprocess.check_output(
+        ["git", "-C", upstream, "rev-list", "--reverse", "--topo-order",
+         f"{LAST_LEGACY_RELEASE}..HEAD"], text=True).splitlines()
+    data = subprocess.check_output(
+        ["gh", "api", "--paginate", "--slurp",
+         f"repos/{os.environ['GITHUB_REPOSITORY']}/releases?per_page=100"])
+    releases = {r["tag_name"]: {a["name"] for a in r["assets"]
+                                if a["state"] == "uploaded" and a["size"] > 0}
+                for page in json.loads(data) for r in page if not r["draft"]}
+    for platform, pending in worklist(commits, releases).items():
+        # GitHub permits up to 256 jobs in each matrix. Further commits remain
+        # pending and are selected by the next scheduled reconciliation.
+        print(f"{platform}={json.dumps(pending[:256], separators=(',', ':'))}")
+
+
+if __name__ == "__main__":
+    main()

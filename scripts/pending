@@ -5,7 +5,11 @@ src=${1:-upstream}
 published=$(mktemp)
 trap 'rm -f -- "$published"' EXIT
 gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-    --jq '.[] | select(.draft == false) | .tag_name' > "$published"
+    --jq '.[] | select(.draft == false) |
+        [.assets[] | select(.state == "uploaded" and .size > 0) | .name] as $files |
+        select(($files | index("SHA256SUMS")) and ($files | index("avernella-source.tar.gz")) and
+               any($files[]; startswith("avernella_") and endswith("_amd64.deb"))) |
+        .tag_name' > "$published"
 
 git -C "$src" rev-list --reverse --topo-order HEAD |
     while IFS= read -r commit; do

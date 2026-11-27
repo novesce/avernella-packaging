@@ -3,8 +3,10 @@ name: Build Avernella Fedora RPM repository
 on:
   push:
     branches: [main]
-    tags: ['avernella-source-*']
     paths-ignore:
+      - '.github/workflows/source-formats.yml'
+      - 'scripts/pending-formats'
+      - 'scripts/source-release'
       - 'liney/**'
       - 'aur/**'
       - 'flatpak/**'
@@ -13,9 +15,17 @@ on:
       - '.github/workflows/liney-aur.yml'
       - '.github/workflows/packages.yml'
       - '.github/workflows/flatpak.yml'
-  schedule:
-    - cron: '17,37,57 * * * *'
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Source commit on main (defaults to the latest)
+        required: false
+        type: string
 
 concurrency:
   group: avernella-fedora-rpm
@@ -33,32 +43,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      build: ${{ steps.check.outputs.build }}
       sha: ${{ steps.check.outputs.sha }}
       version: ${{ steps.check.outputs.version }}
     steps:
-      - name: Check latest Avernella commit
+      - name: Select Avernella source commit
         id: check
         env:
-          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
-          sha=$(git -C upstream rev-parse HEAD)
+          sha=${SOURCE_SHA:-$(git -C upstream rev-parse HEAD)}
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          git -C upstream merge-base --is-ancestor "$sha" origin/main
+          git -C upstream checkout --quiet --detach "$sha"
           revision=$(git -C upstream rev-list --count HEAD)
           version="0.1^git${revision}.${sha:0:7}"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          published=$(gh release view rpm-latest --json body --jq '.body' 2>/dev/null || true)
-          if [[ "$published" != *"$sha"* || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
-              ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
-            echo "build=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Fedora RPM repository is already up to date at $version ($sha)."
-          fi
 
   build:
     needs: plan
-    if: needs.plan.outputs.build == 'true'
     runs-on: ubuntu-latest
     container:
       image: fedora:41
@@ -106,14 +110,13 @@ jobs:
       - name: Upload RPM artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: avernella-rpm-x86_64
+          name: avernella-rpm-x86_64-${{ needs.plan.outputs.sha }}
           path: out/rpm/avernella-*.rpm
           if-no-files-found: error
           retention-days: 14
 
   verify:
     needs: [plan, build]
-    if: needs.plan.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -126,7 +129,7 @@ jobs:
       - name: Download built RPM
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: avernella-rpm-x86_64
+          name: avernella-rpm-x86_64-${{ needs.plan.outputs.sha }}
           path: out/rpm
 
       - name: Install and verify RPM on Fedora ${{ matrix.fedora }}
@@ -147,7 +150,6 @@ jobs:
 
   publish:
     needs: [plan, build, verify]
-    if: needs.plan.outputs.build == 'true'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -161,7 +163,7 @@ jobs:
       - name: Download built RPM
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: avernella-rpm-x86_64
+          name: avernella-rpm-x86_64-${{ needs.plan.outputs.sha }}
           path: out/release
 
       - name: Install createrepo_c
@@ -178,7 +180,18 @@ jobs:
           (cd out/release && sha256sum avernella-*.rpm > SHA256SUMS)
           ls -la out/release "$arch_dir"
 
+      - name: Check whether this source is still current
+        id: channel
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          latest=$(git ls-remote --exit-code https://github.com/novesce/avernella.git refs/heads/main)
+          if [[ "${latest%%$'\t'*}" == "$SHA" ]]; then
+            echo 'latest=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish RPM to GitHub Releases
+        if: steps.channel.outputs.latest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.plan.outputs.sha }}
@@ -202,14 +215,20 @@ jobs:
               --title "Avernella Fedora RPM (${VERSION})" --notes "$notes" \
               out/release/avernella-*.rpm out/release/SHA256SUMS
           fi
-          if gh release view "avernella-$SHA" >/dev/null 2>&1; then
-            gh release upload "avernella-$SHA" --clobber out/release/avernella-*.rpm
-          fi
 
       - name: Publish DNF repository to GitHub Pages
+        if: steps.channel.outputs.latest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.plan.outputs.sha }}
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
           scripts/publish-gh-pages rpm out/rpm-site "$VERSION" "$SHA"
+
+      - name: Archive this source revision's RPM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          scripts/source-release "$SHA"
+          gh release upload "avernella-$SHA" --clobber out/release/avernella-*.rpm
