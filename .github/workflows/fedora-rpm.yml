@@ -59,21 +59,17 @@ jobs:
   build:
     needs: plan
     if: needs.plan.outputs.build == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        fedora: ['41', '42', '43']
     runs-on: ubuntu-latest
     container:
-      image: fedora:${{ matrix.fedora }}
+      image: fedora:41
     timeout-minutes: 35
     steps:
-      - name: Install Fedora build dependencies
+      - name: Install Fedora 41 build dependencies
         run: |
           dnf install -y \
             git gcc make binutils pkgconf-pkg-config curl tar xz patch \
-            cmake ninja-build autoconf automake libtool \
-            rpm-build createrepo_c desktop-file-utils \
+            cmake ninja-build autoconf automake libtool nasm perl \
+            rpm-build desktop-file-utils \
             glslang spirv-tools vulkan-loader \
             'pkgconfig(sdl2)' \
             'pkgconfig(pangocairo)' \
@@ -89,37 +85,67 @@ jobs:
             'pkgconfig(opus)' \
             'pkgconfig(libsrtp2)' \
             'pkgconfig(zlib)' \
-            'pkgconfig(vpx)' \
             'pkgconfig(libpipewire-0.3)' \
             'pkgconfig(libseccomp)' \
             'pkgconfig(zbar)' \
             'pkgconfig(webkitgtk-6.0)'
-          dnf install -y ffmpeg-free-devel || true
-          dnf install -y wpewebkit-devel || true
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
           persist-credentials: false
 
-      - name: Build and smoke-test Fedora ${{ matrix.fedora }} RPM
+      - name: Build universal Fedora x86_64 RPM
         env:
           SHA: ${{ needs.plan.outputs.sha }}
         run: |
           git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
           git -C upstream checkout --quiet --detach "$SHA"
-          scripts/rpm upstream "out/fc${{ matrix.fedora }}"
+          scripts/rpm upstream out/rpm
 
-      - name: Upload Fedora ${{ matrix.fedora }} RPM artifact
+      - name: Upload RPM artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: avernella-rpm-fc${{ matrix.fedora }}
-          path: out/fc${{ matrix.fedora }}/avernella-*.rpm
+          name: avernella-rpm-x86_64
+          path: out/rpm/avernella-*.rpm
           if-no-files-found: error
           retention-days: 14
 
-  publish:
+  verify:
     needs: [plan, build]
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['41', '42', '43', 'rawhide']
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:${{ matrix.fedora }}
+    timeout-minutes: 15
+    steps:
+      - name: Download built RPM
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-rpm-x86_64
+          path: out/rpm
+
+      - name: Install and verify RPM on Fedora ${{ matrix.fedora }}
+        run: |
+          rpm_file=$(ls out/rpm/avernella-*.rpm | head -n 1)
+          dnf install -y --setopt=install_weak_deps=False "$rpm_file"
+          /usr/bin/avernella --help
+          test -x /usr/lib/avernella/avernella-liff-gtk
+          test -f /usr/lib/avernella/avernella-vulkan.so
+          for bin in /usr/bin/avernella /usr/lib/avernella/avernella-liff-gtk /usr/lib/avernella/avernella-vulkan.so; do
+            if ldd "$bin" | grep -q 'not found'; then
+              echo "Unresolved shared library in $bin on Fedora ${{ matrix.fedora }}:" >&2
+              ldd "$bin" >&2
+              exit 1
+            fi
+          done
+
+  publish:
+    needs: [plan, build, verify]
     if: needs.plan.outputs.build == 'true'
     permissions:
       contents: write
@@ -131,11 +157,11 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: Download built RPMs
+      - name: Download built RPM
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: avernella-rpm-fc*
-          path: out/artifacts
+          name: avernella-rpm-x86_64
+          path: out/release
 
       - name: Install createrepo_c
         run: |
@@ -144,25 +170,20 @@ jobs:
 
       - name: Build DNF repository metadata
         run: |
-          mkdir -p out/rpm-site out/release
-          for dir in out/artifacts/avernella-rpm-fc*; do
-            rel="${dir##*fc}"
-            arch_dir="out/rpm-site/fedora/${rel}/x86_64"
-            mkdir -p "$arch_dir"
-            cp -f "$dir"/avernella-*.rpm "$arch_dir/"
-            cp -f "$dir"/avernella-*.rpm out/release/
-            createrepo_c --simple-md-filenames "$arch_dir"
-          done
+          arch_dir="out/rpm-site/fedora/x86_64"
+          mkdir -p "$arch_dir"
+          cp -f out/release/avernella-*.rpm "$arch_dir/"
+          createrepo_c --simple-md-filenames "$arch_dir"
           (cd out/release && sha256sum avernella-*.rpm > SHA256SUMS)
-          ls -la out/release
+          ls -la out/release "$arch_dir"
 
-      - name: Publish RPMs to GitHub Releases
+      - name: Publish RPM to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ needs.plan.outputs.sha }}
           VERSION: ${{ needs.plan.outputs.version }}
         run: |
-          notes="Fedora x86_64 RPM packages for Avernella ${VERSION} (https://github.com/novesce/avernella/commit/${SHA}).
+          notes="Universal Fedora x86_64 RPM package (tested on Fedora 41, 42, 43, and Rawhide / Fedora 45+) for Avernella ${VERSION} (https://github.com/novesce/avernella/commit/${SHA}).
 
           Install via the auto-updating DNF repository:
           \`\`\`sh

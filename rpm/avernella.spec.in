@@ -3,7 +3,7 @@
 
 Name:           avernella
 Version:        @VERSION@
-Release:        @RELEASE@%{?dist}
+Release:        @RELEASE@
 Summary:        Independent Linux desktop client compatible with LINE
 
 License:        GPL-3.0-or-later AND MIT AND BSD-3-Clause

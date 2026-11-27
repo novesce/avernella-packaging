@@ -35,8 +35,8 @@ REPO
         cp -a "$payload" "$dir/rpm"
         cat > "$dir/avernella.repo" <<'REPO'
 [avernella]
-name=Avernella for Fedora $releasever ($basearch)
-baseurl=https://novesce.github.io/avernella-packaging/rpm/fedora/$releasever/$basearch/
+name=Avernella for Fedora ($basearch)
+baseurl=https://novesce.github.io/avernella-packaging/rpm/fedora/$basearch/
 enabled=1
 gpgcheck=0
 REPO

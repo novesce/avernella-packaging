@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+version=1.15.0
+checksum=e935eded7d81631a538bfae703fd1e293aad1c7fd3407ba00440c95105d2011e
+out=$(realpath -m "${1:?Output directory is required}")
+scratch=$(mktemp -d)
+trap 'rm -rf -- "$scratch"' EXIT
+
+archive="$scratch/libvpx-${version}.tar.gz"
+curl --fail --silent --show-error --location --retry 3 \
+    "https://github.com/webmproject/libvpx/archive/refs/tags/v${version}.tar.gz" -o "$archive"
+printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check
+tar -xzf "$archive" -C "$scratch"
+src="$scratch/libvpx-${version}"
+mkdir -p "$scratch/build"
+cd "$scratch/build"
+CC=gcc "$src/configure" \
+    --prefix="$out" \
+    --libdir="$out/lib" \
+    --enable-pic \
+    --enable-static \
+    --disable-shared \
+    --enable-vp8 \
+    --disable-vp9 \
+    --disable-examples \
+    --disable-tools \
+    --disable-docs \
+    --disable-unit-tests
+make -j"$(nproc)"
+make install
+install -m644 "$src/LICENSE" "$out/LICENSE"
+install -Dm644 "$archive" "$out/sources/libvpx-${version}.tar.gz"
+PKG_CONFIG_PATH="$out/lib/pkgconfig" pkg-config --exact-version="$version" vpx

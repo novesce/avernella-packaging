@@ -29,7 +29,7 @@ The recipe fetches the x86-64 Ubuntu release from GitHub, verifies its SHA-256 c
 
 ## Fedora (RPM / DNF repository)
 
-Install from the auto-updating Fedora DNF repository (Fedora 41, 42, and 43, `x86_64` — updates on every Avernella commit):
+Install from the auto-updating Fedora DNF repository (works on Fedora 41 and newer, including Fedora 42, 43, 44, 45 / Rawhide, `x86_64` — updates on every Avernella commit):
 
 ```sh
 sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
@@ -38,7 +38,7 @@ sudo dnf install -y avernella
 
 To update later, run `sudo dnf upgrade avernella`. Standalone `.rpm` files are also published to the [`rpm-latest` release](https://github.com/novesce/avernella-packaging/releases/tag/rpm-latest).
 
-The [Fedora RPM workflow](.github/workflows/fedora-rpm.yml) builds Avernella natively inside official Fedora 41, 42, and 43 containers with the native Vulkan renderer and WebKitGTK 6.0 LIFF browser (plus WPE WebKit when available), smoke-tests the installed RPM, publishes standalone `.rpm` packages to Releases, and updates the DNF repository on GitHub Pages.
+The [Fedora RPM workflow](.github/workflows/fedora-rpm.yml) builds a release-independent Fedora `x86_64` RPM on Fedora 41 (statically linking `json-c`, `rnnoise`, and `libvpx` so it avoids SONAME bumps across Fedora releases), verifies installation and `ldd` across Fedora 41, 42, 43, and Rawhide containers, publishes the standalone `.rpm` to Releases, and updates the DNF repository on GitHub Pages.
 
 ## Flatpak (GNOME 49 runtime, with LIFF browser)
 
