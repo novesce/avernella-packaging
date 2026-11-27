@@ -1,8 +1,14 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Avernella Flatpak Repository</title>
-<h1>Avernella Flatpak Repository</h1>
-<p>Latest build: <code>0.1+git64.72163b1</code> (<a href="https://github.com/novesce/avernella/commit/72163b1aeb3e11cd7b20241dc33e58b42adc257d">72163b1</a>)</p>
+<title>Avernella Package Repositories</title>
+<h1>Avernella Package Repositories</h1>
+<p>Latest published build: <code>0.1+git74.acd0d3b</code> (<a href="https://github.com/novesce/avernella/commit/acd0d3ba45bbcc3026f38388cbf5c4a319915673">acd0d3b</a>)</p>
+
+<h2>Fedora (DNF / RPM Repository)</h2>
+<pre>sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
+sudo dnf install -y avernella</pre>
+
+<h2>Flatpak (GNOME 49 Runtime)</h2>
 <pre>flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak remote-add --user --no-gpg-verify --if-not-exists avernella https://novesce.github.io/avernella-packaging/repo
 flatpak install --user avernella io.github.novesce.Avernella</pre>
