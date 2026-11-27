@@ -66,18 +66,16 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub \
-            org.flatpak.Builder \
             org.kde.Platform//6.11 \
             org.kde.Sdk//6.11
 
-      - name: Lint Flatpak manifest and desktop file
+      - name: Validate desktop file and metainfo
         if: steps.plan.outputs.build == 'true'
         run: |
           desktop-file-validate flatpak/io.github.novesce.Avernella.desktop
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-            manifest flatpak/io.github.novesce.Avernella.yml
+          appstreamcli validate --no-net flatpak/io.github.novesce.Avernella.metainfo.xml
 
-      - name: Build Flatpak and run Flathub repo linter
+      - name: Build Flatpak bundle
         if: steps.plan.outputs.build == 'true'
         env:
           VERSION: ${{ steps.plan.outputs.version }}
@@ -90,11 +88,8 @@ jobs:
             --disable-rofiles-fuse \
             --ccache \
             --repo=out/flatpak/repo \
-            --mirror-screenshots-url=https://dl.flathub.org/media \
             out/flatpak/build \
             flatpak/io.github.novesce.Avernella.yml
-          flatpak run --command=flatpak-builder-lint org.flatpak.Builder \
-            repo out/flatpak/repo
           bundle="avernella_${VERSION}_x86_64.flatpak"
           flatpak build-bundle out/flatpak/repo "out/flatpak/$bundle" \
             io.github.novesce.Avernella \

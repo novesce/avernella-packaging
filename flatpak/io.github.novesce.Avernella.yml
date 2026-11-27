@@ -114,10 +114,12 @@ modules:
         url: https://github.com/novesce/avernella.git
         commit: 56f8a5d9eff593661365f38dbfbd1dae4141bcec
       - type: archive
+        archive-type: tar-gzip
         url: https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/vulkan-sdk-1.4.363.0
         sha256: 4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e
         dest: deps/vulkan-headers
       - type: archive
+        archive-type: tar-gzip
         url: https://codeload.github.com/zeux/volk/tar.gz/54fc0d7a72887cbfc5b030d26897b2b40ac53fb8
         sha256: 4944450dc3943871a28ce993eaf995309eb29e7000e091309968dba4cd321648
         dest: deps/volk
