@@ -111,7 +111,9 @@ modules:
     buildsystem: simple
     build-commands:
       - pkg-config --atleast-version=0.19 json-c
-      - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode webkitgtk-6.0 wayland-client wayland-protocols
+      - >-
+        pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode webkitgtk-6.0
+        wayland-client wayland-protocols libsecret-1
       - command -v wayland-scanner
       - |
         cat > build-glslang.sh <<'EOF'
@@ -138,7 +140,7 @@ modules:
       - >-
         make -j"${FLATPAK_BUILDER_N_JOBS}" CC=gcc
         GLSLANG=./build-glslang.sh SPIRV_VAL=true
-        LIFF_BROWSER=1 LIFF_GTK=1 NATIVE_VULKAN=1 STRIP_RELEASE=
+        LIFF_BROWSER=1 LIFF_GTK=1 NATIVE_VULKAN=1 KEYRING=1 STRIP_RELEASE=
         VOLK_DIR=deps/volk VK_HEADERS=deps/vulkan-headers/include all
       - install -Dm755 avernella /app/bin/avernella
       - install -Dm755 avernella-liff-gtk /app/lib/avernella/avernella-liff-gtk

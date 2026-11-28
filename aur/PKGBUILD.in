@@ -8,7 +8,7 @@ url='https://github.com/novesce/avernella'
 license=('GPL-3.0-or-later')
 depends=('glibc' 'sdl2-compat' 'cairo' 'pango' 'glib2' 'qrencode' 'curl'
          '@CRYPTO@' '@VPX@' 'libjpeg-turbo' 'libpng' 'libwebp' 'opus'
-         'libsrtp' 'libpipewire' 'zlib' 'wayland' 'gtk4' 'webkitgtk-6.0')
+         'libsrtp' 'libpipewire' 'libsecret' 'zlib' 'wayland' 'gtk4' 'webkitgtk-6.0')
 optdepends=('ffmpeg: video playback and recording'
             'vulkan-icd-loader: native GPU rendering with a Vulkan driver'
             'xdg-desktop-portal: file chooser, screenshots and screen sharing'

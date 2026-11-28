@@ -41,7 +41,7 @@ jobs:
             libwayland-dev libwayland-bin wayland-protocols \
             libcurl4-openssl-dev libssl-dev libturbojpeg0-dev libpng-dev libwebp-dev \
             libopus-dev libsrtp2-dev zlib1g-dev libvpx-dev libpipewire-0.3-dev libseccomp-dev \
-            libzbar-dev ffmpeg libwebkitgtk-6.0-dev xvfb xauth dbus-daemon python3 \
+            libzbar-dev libsecret-1-dev ffmpeg libwebkitgtk-6.0-dev xvfb xauth dbus-daemon python3 \
             cmake ninja-build autoconf automake libtool glslang-tools spirv-tools libvulkan1
           if apt-cache show libwpewebkit-2.0-dev >/dev/null 2>&1; then
             sudo apt-get install -y --no-install-recommends libwpewebkit-2.0-dev || true

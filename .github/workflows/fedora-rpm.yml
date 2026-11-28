@@ -93,6 +93,7 @@ jobs:
             'pkgconfig(zlib)' \
             'pkgconfig(libpipewire-0.3)' \
             'pkgconfig(libseccomp)' \
+            'pkgconfig(libsecret-1)' \
             'pkgconfig(zbar)' \
             'pkgconfig(webkitgtk-6.0)'
 

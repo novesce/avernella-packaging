@@ -20,6 +20,7 @@ pkgbase = avernella-bin
 	depends = opus
 	depends = libsrtp
 	depends = libpipewire
+	depends = libsecret
 	depends = zlib
 	depends = wayland
 	depends = gtk4

@@ -13,7 +13,7 @@ arch=$(dpkg --print-architecture)
 export SOURCE_DATE_EPOCH=$(git -C "$src" log -1 --format=%ct)
 export PKG_CONFIG_PATH="$json_c/lib/pkgconfig:$rnnoise/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
-pkg-config --exists webkitgtk-6.0 rnnoise
+pkg-config --exists webkitgtk-6.0 rnnoise libsecret-1
 pkg-config --atleast-version=0.19 json-c
 scratch=$(mktemp -d)
 trap 'rm -rf -- "$scratch"' EXIT
@@ -44,7 +44,7 @@ HEADER
     makefiles+=(-f "$scratch/pango.mk")
 fi
 
-make -C "$src" "${makefiles[@]}" CC=gcc LIFF_BROWSER=1 LIFF_GTK=1 \
+make -C "$src" "${makefiles[@]}" CC=gcc LIFF_BROWSER=1 LIFF_GTK=1 KEYRING=1 \
     NATIVE_VULKAN=1 VOLK_DIR="$sdk/volk" VK_HEADERS="$sdk/headers/include" all check
 root="$scratch/package"
 private="$root/usr/lib/avernella"
