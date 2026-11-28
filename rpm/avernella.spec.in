@@ -8,7 +8,9 @@
 %global __brp_check_rpaths %{nil}
 # Ubuntu's libvpx.so.12 ships privately in /usr/lib/avernella: Fedora 43
 # and 44 only have libvpx.so.9. It is neither required nor provided.
-%global __requires_exclude ^libvpx\\.so\\.12
+# Debian tags libcurl's symbols CURL_OPENSSL_4; Fedora's libcurl.so.4 has no
+# symbol versions and still satisfies them. libcurl.so.4 stays required.
+%global __requires_exclude ^(libvpx\\.so\\.12|libcurl\\.so\\.4\\(CURL_OPENSSL_[0-9]+\\))
 %global __provides_exclude_from ^/usr/lib/avernella/.*$
 %global vpx_deb libvpx12_1.16.0-3_amd64.deb
 %global vpx_sum e1b852dfaa099fbcc60ab08d4e340553a7701c501544089609838c9417ba5fa0
