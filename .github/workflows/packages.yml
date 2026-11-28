@@ -216,7 +216,8 @@ jobs:
   # with Ubuntu's libvpx.so.12 bundled for Fedora 43 and 44.
   fedora-plan:
     needs: latest
-    if: needs.latest.outputs.sha != ''
+    # A run with no new package still checks the current release.
+    if: ${{ !cancelled() && needs.latest.outputs.sha != '' }}
     outputs:
       validated: ${{ steps.plan.outputs.validated }}
     env:
@@ -265,7 +266,7 @@ jobs:
 
   fedora:
     needs: [latest, fedora-plan]
-    if: needs.fedora-plan.outputs.validated == 'true'
+    if: ${{ !cancelled() && needs.fedora-plan.outputs.validated == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -301,7 +302,7 @@ jobs:
 
   copr-publish:
     needs: [latest, fedora]
-    if: needs.fedora.result == 'success'
+    if: ${{ !cancelled() && needs.fedora.result == 'success' }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
