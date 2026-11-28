@@ -29,40 +29,6 @@ cleanup:
   - '*.la'
   - '*.a'
 modules:
-  - name: json-c
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DBUILD_SHARED_LIBS=ON
-      - -DBUILD_STATIC_LIBS=OFF
-      - -DBUILD_APPS=OFF
-      - -DBUILD_TESTING=OFF
-    post-install:
-      - install -Dm644 COPYING /app/share/licenses/json-c/COPYING
-    sources:
-      - type: archive
-        url: https://s3.amazonaws.com/json-c_releases/releases/json-c-0.19-nodoc.tar.gz
-        sha256: 704927172443309a8efeb162060bb215548e1286e5568514007dd2cc35a0a164
-
-  - name: rnnoise
-    buildsystem: simple
-    build-commands:
-      - printf 'PACKAGE_VERSION="0.2"\n' > package_version
-      - autoreconf -fi
-      - |
-        rtcd=""
-        if [ "$(uname -m)" = "x86_64" ]; then
-          rtcd="--enable-x86-rtcd"
-        fi
-        ./configure --prefix=/app --libdir=/app/lib --enable-shared --disable-static --disable-examples --disable-doc $rtcd
-      - make -j"${FLATPAK_BUILDER_N_JOBS}"
-      - make install
-      - install -Dm644 COPYING /app/share/licenses/rnnoise/COPYING
-    sources:
-      - type: archive
-        url: https://deb.debian.org/debian/pool/main/r/rnnoise/rnnoise_0.2+ds.orig.tar.xz
-        sha256: db2718ee4a0b294bfbbe198fe94aabfdc8cd0d77cb9cd95d76c7a818ad805f0b
-
   - name: libsrtp
     buildsystem: meson
     config-opts:
@@ -107,65 +73,40 @@ modules:
         url: https://github.com/fukuchi/libqrencode/archive/refs/tags/v4.1.1.tar.gz
         sha256: 5385bc1b8c2f20f3b91d258bf8ccc8cf62023935df2d2676b5b67049f31a049c
 
+  # Avernella itself is the verified Ubuntu release, as in the AUR and COPR
+  # packages. The GNOME runtime provides its libraries except qrencode
+  # (built above) and libvpx.so.12: the runtime has libvpx.so.11, so Ubuntu
+  # 26.04's libvpx12, which the release links against, goes in /app/lib.
   - name: avernella
     buildsystem: simple
+    build-options:
+      no-debuginfo: true
+      strip: false
     build-commands:
-      - pkg-config --atleast-version=0.19 json-c
-      - >-
-        pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode webkitgtk-6.0
-        wayland-client wayland-protocols libsecret-1
-      - command -v wayland-scanner
-      - |
-        cat > build-glslang.sh <<'EOF'
-        #!/bin/sh
-        set -e
-        args=""
-        out=""
-        prev=""
-        for a in "$@"; do
-          if [ "$prev" = "-o" ]; then
-            out="$a"
-          fi
-          prev="$a"
-          if [ "$a" != "-Os" ]; then
-            args="$args $a"
-          fi
-        done
-        glslangValidator $args
-        if [ -n "$out" ] && command -v spirv-opt >/dev/null 2>&1; then
-          spirv-opt -Os "$out" -o "$out.opt" && mv "$out.opt" "$out"
-        fi
-        EOF
-        chmod +x build-glslang.sh
-      - >-
-        make -j"${FLATPAK_BUILDER_N_JOBS}" CC=gcc
-        GLSLANG=./build-glslang.sh SPIRV_VAL=true
-        LIFF_BROWSER=1 LIFF_GTK=1 NATIVE_VULKAN=1 KEYRING=1 STRIP_RELEASE=
-        VOLK_DIR=deps/volk VK_HEADERS=deps/vulkan-headers/include all
-      - install -Dm755 avernella /app/bin/avernella
-      - install -Dm755 avernella-liff-gtk /app/lib/avernella/avernella-liff-gtk
-      - install -Dm644 avernella-vulkan.so /app/lib/avernella/avernella-vulkan.so
+      - mkdir deb vpx
+      - bsdtar -xf @DEB@ 'data.tar.*'
+      - bsdtar --no-same-owner -xf data.tar.* -C deb
+      - rm data.tar.*
+      - bsdtar -xf libvpx12_1.16.0-3_amd64.deb 'data.tar.*'
+      - bsdtar --no-same-owner -xf data.tar.* -C vpx
+      - install -Dm755 deb/usr/bin/avernella /app/bin/avernella
+      - install -Dm755 deb/usr/lib/avernella/avernella-liff-gtk /app/lib/avernella/avernella-liff-gtk
+      - install -Dm644 deb/usr/lib/avernella/avernella-vulkan.so /app/lib/avernella/avernella-vulkan.so
+      - install -Dm644 vpx/usr/lib/x86_64-linux-gnu/libvpx.so.12.0.0 /app/lib/libvpx.so.12
       - install -Dm644 io.github.novesce.Avernella.desktop /app/share/applications/io.github.novesce.Avernella.desktop
       - install -Dm644 io.github.novesce.Avernella.metainfo.xml /app/share/metainfo/io.github.novesce.Avernella.metainfo.xml
-      - install -Dm644 data/avernella.png /app/share/icons/hicolor/256x256/apps/io.github.novesce.Avernella.png
-      - install -Dm644 data/avernella-mark.png /app/share/icons/hicolor/64x64/apps/io.github.novesce.Avernella.png
-      - install -Dm644 LICENSE /app/share/licenses/avernella/LICENSE
-      - install -Dm644 deps/volk/LICENSE.md /app/share/licenses/volk/LICENSE.md
-      - install -Dm644 deps/vulkan-headers/LICENSES/MIT.txt /app/share/licenses/vulkan-headers/MIT.txt
+      - install -Dm644 deb/usr/share/icons/hicolor/256x256/apps/avernella.png /app/share/icons/hicolor/256x256/apps/io.github.novesce.Avernella.png
+      - install -Dm644 deb/usr/share/icons/hicolor/64x64/apps/avernella.png /app/share/icons/hicolor/64x64/apps/io.github.novesce.Avernella.png
+      - install -d /app/share/licenses/avernella
+      - cp -a deb/usr/share/doc/avernella/. /app/share/licenses/avernella/
+      - install -Dm644 vpx/usr/share/doc/libvpx12/copyright /app/share/licenses/libvpx/copyright
     sources:
-      - type: git
-        url: https://github.com/novesce/avernella.git
-        commit: @COMMIT@
-      - type: archive
-        archive-type: tar-gzip
-        url: https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/vulkan-sdk-1.4.363.0
-        sha256: 4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e
-        dest: deps/vulkan-headers
-      - type: archive
-        archive-type: tar-gzip
-        url: https://codeload.github.com/zeux/volk/tar.gz/54fc0d7a72887cbfc5b030d26897b2b40ac53fb8
-        sha256: 4944450dc3943871a28ce993eaf995309eb29e7000e091309968dba4cd321648
-        dest: deps/volk
+      - type: file
+        url: https://github.com/novesce/avernella-packaging/releases/download/avernella-@COMMIT@/@DEB@
+        sha256: @SUM@
+      - type: file
+        url: https://launchpad.net/ubuntu/+archive/primary/+files/libvpx12_1.16.0-3_amd64.deb
+        sha256: e1b852dfaa099fbcc60ab08d4e340553a7701c501544089609838c9417ba5fa0
       - type: file
         path: io.github.novesce.Avernella.desktop
       - type: file

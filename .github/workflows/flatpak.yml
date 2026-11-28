@@ -46,6 +46,8 @@ jobs:
     outputs:
       sha: ${{ steps.plan.outputs.sha }}
       version: ${{ steps.plan.outputs.version }}
+      sum: ${{ steps.deb.outputs.sum }}
+      ready: ${{ steps.deb.outputs.ready }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -66,12 +68,34 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Update Flatpak manifest and metainfo
+      # The Flatpak repackages this commit's verified Debian release.
+      - name: Find the released Debian package
+        id: deb
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          VERSION: ${{ steps.plan.outputs.version }}
         run: |
-          scripts/flatpak-recipe upstream flatpak
+          file="avernella_${VERSION}_amd64.deb"
+          digest=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/avernella-$SHA" \
+            --jq ".assets[] | select(.state == \"uploaded\" and .name == \"$file\") | .digest" 2>/dev/null || true)
+          if [[ ! "$digest" =~ ^sha256:([a-f0-9]{64})$ ]]; then
+            echo "::notice::avernella-$SHA has no released $file yet. The queue builds this Flatpak after the Debian release."
+            exit 0
+          fi
+          echo "sum=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo 'ready=true' >> "$GITHUB_OUTPUT"
+
+      - name: Update Flatpak manifest and metainfo
+        if: steps.deb.outputs.ready == 'true'
+        env:
+          SUM: ${{ steps.deb.outputs.sum }}
+        run: |
+          scripts/flatpak-recipe upstream flatpak "$SUM"
           git diff --stat -- flatpak/
 
       - name: Install Flatpak and GNOME 49 runtime
+        if: steps.deb.outputs.ready == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder elfutils appstream desktop-file-utils
@@ -82,11 +106,13 @@ jobs:
             org.gnome.Sdk//49
 
       - name: Validate desktop file and metainfo
+        if: steps.deb.outputs.ready == 'true'
         run: |
           desktop-file-validate flatpak/io.github.novesce.Avernella.desktop
           appstreamcli validate --no-net flatpak/io.github.novesce.Avernella.metainfo.xml
 
       - name: Build Flatpak repo and bundle
+        if: steps.deb.outputs.ready == 'true'
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: |
@@ -108,6 +134,7 @@ jobs:
           echo "bundle=$bundle" >> "$GITHUB_ENV"
 
       - name: Smoke-test installed Flatpak
+        if: steps.deb.outputs.ready == 'true'
         run: |
           flatpak install --user -y --noninteractive "out/flatpak/$bundle"
           flatpak run io.github.novesce.Avernella --help
@@ -117,9 +144,18 @@ jobs:
             test -f /app/lib/avernella/avernella-vulkan.so
             test -f /app/lib/libzbar.so.0
             command -v ffmpeg ffplay >/dev/null
+            # The Ubuntu binaries resolve against the runtime and /app/lib.
+            for elf in /app/bin/avernella /app/lib/avernella/avernella-liff-gtk \
+                /app/lib/avernella/avernella-vulkan.so; do
+              if LC_ALL=C ldd -r "$elf" 2>&1 | grep -E "not found|undefined symbol"; then
+                exit 1
+              fi
+            done
+            ldd /app/bin/avernella | grep -q "libvpx.so.12 => /app/lib/libvpx.so.12"
           '
 
       - name: Upload Flatpak bundle artifact
+        if: steps.deb.outputs.ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: avernella-flatpak-${{ steps.plan.outputs.sha }}
@@ -128,11 +164,13 @@ jobs:
           retention-days: 14
 
       - name: Archive the OSTree files for static hosting
+        if: steps.deb.outputs.ready == 'true'
         run: |
           # OSTree's local advisory lock is not part of an HTTP repository.
           tar --hard-dereference --exclude='./.lock' -C out/flatpak/repo -cf out/flatpak/ostree.tar .
 
       - name: Upload OSTree files
+        if: steps.deb.outputs.ready == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: avernella-ostree-${{ steps.plan.outputs.sha }}
@@ -142,6 +180,7 @@ jobs:
 
   publish:
     needs: build
+    if: needs.build.outputs.ready == 'true'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -149,6 +188,7 @@ jobs:
     env:
       SHA: ${{ needs.build.outputs.sha }}
       VERSION: ${{ needs.build.outputs.version }}
+      SUM: ${{ needs.build.outputs.sum }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -186,7 +226,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="GNOME 49 runtime Flatpak (with WebKitGTK LIFF browser) for Avernella $VERSION (https://github.com/novesce/avernella/commit/$SHA). Install with: flatpak install --user ./$bundle"
+          notes="GNOME 49 runtime Flatpak (with WebKitGTK LIFF browser), repackaged from the verified Ubuntu release of Avernella $VERSION (https://github.com/novesce/avernella/commit/$SHA). Install with: flatpak install --user ./$bundle"
           if gh release view flatpak-latest >/dev/null 2>&1; then
             for old in $(gh release view flatpak-latest --json assets --jq '.assets[].name'); do
               gh release delete-asset flatpak-latest "$old" -y
@@ -227,7 +267,7 @@ jobs:
           git -C upstream fetch --quiet origin main
           [[ "$(git -C upstream rev-parse origin/main)" == "$SHA" ]] || exit 0
           git -C upstream checkout --quiet --detach "$SHA"
-          scripts/flatpak-recipe upstream flatpak
+          scripts/flatpak-recipe upstream flatpak "$SUM"
           if git diff --quiet -- flatpak/io.github.novesce.Avernella.yml flatpak/io.github.novesce.Avernella.metainfo.xml; then
             echo "Manifest already matches $SHA."
             exit 0

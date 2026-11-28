@@ -29,7 +29,7 @@ The recipe fetches the x86-64 Ubuntu release from GitHub, verifies its SHA-256 c
 
 ## Fedora (COPR)
 
-Install from the [novesce/avernella COPR](https://copr.fedorainfracloud.org/coprs/novesce/avernella/) on Fedora 43 and newer, including Rawhide (`x86_64`):
+Install from the [novesce/avernella COPR](https://copr.fedorainfracloud.org/coprs/novesce/avernella/) on Fedora 43, 44 and 45 (`x86_64`):
 
 ```sh
 sudo dnf copr enable novesce/avernella
@@ -38,7 +38,7 @@ sudo dnf install avernella
 
 To update later, run `sudo dnf upgrade avernella`.
 
-The RPM repackages the same verified Ubuntu `.deb` as the default release and the AUR, so every format ships one build. Fedora 43 and 44 have libvpx 1.15 (`libvpx.so.9`) while the release links libvpx 1.16, so the RPM also carries Ubuntu 26.04's `libvpx.so.12`, pinned by SHA-256, privately in `/usr/lib/avernella`. It neither requires nor provides a system libvpx. All other libraries come from Fedora.
+The RPM repackages the same verified Ubuntu `.deb` as the default release and the AUR, so every format ships one build. Fedora 43 and 44 have libvpx 1.15 (`libvpx.so.9`) while the release links libvpx 1.16, so the RPM also carries Ubuntu 26.04's `libvpx.so.12`, pinned by SHA-256, privately in `/usr/lib/avernella`. It neither requires nor provides a system libvpx. All other libraries come from Fedora. Rawhide (the coming Fedora 46) has moved to OpenSSL 4 while the release links OpenSSL 3, so COPR does not build for it yet.
 
 If you used the earlier self-hosted DNF repository, remove it and switch to COPR. The package name and version numbering are unchanged, so `dnf` upgrades in place:
 
@@ -73,7 +73,7 @@ flatpak-builder --force-clean --user --install \
   out/flatpak-build flatpak/io.github.novesce.Avernella.yml
 ```
 
-The [Flatpak workflow](.github/workflows/flatpak.yml) builds each queued Avernella commit, updates `flatpak/io.github.novesce.Avernella.yml` and `flatpak/io.github.novesce.Avernella.metainfo.xml` via `scripts/flatpak-recipe`, builds Avernella with the WebKitGTK 6.0 LIFF browser and native Vulkan renderer, smoke-tests the installed app, publishes a fresh `.flatpak` bundle to Releases, and updates the Flatpak OSTree repository on GitHub Pages.
+The Flatpak repackages the same verified Ubuntu `.deb` as the default release, the AUR and COPR, so every format ships one build. The GNOME 49 runtime provides its libraries except three: the manifest builds `libqrencode`, `libsrtp` (with OpenSSL) and `zbar`, and installs Ubuntu 26.04's `libvpx.so.12`, pinned by SHA-256, in `/app/lib` because the runtime only has `libvpx.so.11`. The [Flatpak workflow](.github/workflows/flatpak.yml) builds each queued commit once its Debian release exists, pins that `.deb`'s SHA-256 in `flatpak/io.github.novesce.Avernella.yml` and the metainfo via `scripts/flatpak-recipe`, smoke-tests the installed app (no unresolved libraries or symbols, the bundled libvpx in use, `avernella --help`), publishes a fresh `.flatpak` bundle to Releases, and updates the Flatpak OSTree repository on GitHub Pages.
 
 ## Publishing
 
@@ -87,7 +87,7 @@ Scheduled checks reconcile unfinished commits every 20 minutes. To run a check i
 
 When a newer release is available, the workflow builds the recipe in a clean Arch container, installs it, checks the executable and browser helpers for unresolved libraries and symbols, and runs `avernella --help`. It pushes the verified `PKGBUILD` and `.SRCINFO` to the AUR using the registered maintainer key in the `AUR_SSH_PRIVATE_KEY` packaging repository secret. To regenerate the recipe locally on Arch, run `scripts/aur-recipe path/to/release.deb FULL_APP_COMMIT output-directory`.
 
-For Fedora, the same workflow asks COPR which version it last built. When the release is newer, it renders [`rpm/avernella.spec.in`](rpm/avernella.spec.in) with `scripts/copr-recipe`, then builds, installs and checks the RPM with `scripts/fedora-check` in Fedora 43, 44, 45 and Rawhide containers: no unresolved libraries or symbols, the bundled libvpx in use, and `avernella --help`. Only then does it submit the source RPM with `copr-cli build novesce/avernella`, using the COPR API configuration in the `COPR_CONFIG` packaging repository secret (the contents of `~/.config/copr` from https://copr.fedorainfracloud.org/api/). COPR API tokens expire after 180 days.
+For Fedora, the same workflow asks COPR which version it last built. When the release is newer, it renders [`rpm/avernella.spec.in`](rpm/avernella.spec.in) with `scripts/copr-recipe`, then builds, installs and checks the RPM with `scripts/fedora-check` in Fedora 43, 44 and 45 containers: no unresolved libraries or symbols, the bundled libvpx in use, and `avernella --help`. Only then does it submit the source RPM with `copr-cli build novesce/avernella`, using the COPR API configuration in the `COPR_CONFIG` packaging repository secret (the contents of `~/.config/copr` from https://copr.fedorainfracloud.org/api/). COPR API tokens expire after 180 days.
 
 The Ubuntu package for source revision `8c8d0f5` backports grayscale text antialiasing on scrollable GPU textures. Its source archive contains the exact patched files, and the installed package includes the diff at `/usr/share/doc/avernella/packaging.patch`.
 

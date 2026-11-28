@@ -16,14 +16,21 @@ WORKLIST = runpy.run_path(str(ROOT / "scripts/pending-formats"))["worklist"]
 class PackageQueue(unittest.TestCase):
     def test_flatpak_queue(self):
         first, second, third = (c * 40 for c in "abc")
+        deb = lambda sha, n: f"avernella_0.1+git{n}.{sha[:7]}_amd64.deb"
         # Old per-commit RPMs no longer count as anything pending.
         rpm = f"avernella-0.1.git77.{first[:7]}-1.x86_64.rpm"
         flat = f"avernella_0.1+git78.{second[:7]}_x86_64.flatpak"
-        releases = {"avernella-" + first: {rpm}, "avernella-" + second: {flat}}
+        releases = {"avernella-" + first: {rpm, deb(first, 77)},
+                    "avernella-" + second: {flat, deb(second, 78)},
+                    "avernella-" + third: set()}
         pending = WORKLIST([first, second, third], releases)
         self.assertEqual(list(pending), ["flatpak"])
-        self.assertEqual(pending["flatpak"], [first, second, third])
+        # The third commit has no Debian release to repackage yet.
+        self.assertEqual(pending["flatpak"], [first, second])
         releases["avernella-" + second].add(flat + ".sha256")
+        self.assertEqual(WORKLIST([first, second, third], releases)["flatpak"],
+                         [first])
+        releases["avernella-" + third].add(deb(third, 79))
         self.assertEqual(WORKLIST([first, second, third], releases)["flatpak"],
                          [first, third])
 

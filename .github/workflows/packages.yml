@@ -62,6 +62,21 @@ jobs:
     with:
       source_sha: ${{ matrix.sha }}
 
+  # Each Flatpak repackages its commit's .deb, so queue them once new
+  # Debian releases exist instead of waiting for the next schedule.
+  queue-flatpak:
+    needs: package
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Queue Flatpaks for the new Debian releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run source-formats.yml --repo "$GITHUB_REPOSITORY" --ref main
+
   latest:
     needs: [plan, package]
     if: ${{ !cancelled() && needs.plan.result == 'success' }}
@@ -270,7 +285,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ['43', '44', '45', 'rawhide']
+        # Rawhide (Fedora 46) moved to OpenSSL 4; the release links OpenSSL 3.
+        fedora: ['43', '44', '45']
     runs-on: ubuntu-latest
     container:
       image: fedora:${{ matrix.fedora }}
@@ -335,5 +351,7 @@ jobs:
           unset COPR_CONFIG
           trap 'rm -f ~/.config/copr' EXIT
           pipx install copr-cli
-          # Waits for every chroot and fails if any build fails.
-          copr-cli build novesce/avernella "${srpms[0]}"
+          # Only the Fedora releases checked above. Waits for every chroot and
+          # fails if any build fails.
+          copr-cli build -r fedora-43-x86_64 -r fedora-44-x86_64 \
+            -r fedora-45-x86_64 novesce/avernella "${srpms[0]}"

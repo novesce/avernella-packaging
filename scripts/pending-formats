@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Plan source SHAs whose Flatpak release assets are missing."""
+"""Plan source SHAs whose Flatpak release assets are missing.
+
+A Flatpak repackages its commit's Debian release, so a commit waits until
+that .deb is published.
+"""
 import json
 import os
 import subprocess
@@ -13,6 +17,9 @@ def worklist(commits, releases):
     missing = {"flatpak": []}
     for sha in commits:
         assets = releases.get("avernella-" + sha, set())
+        if not any(a.startswith("avernella_") and
+                   a.endswith(f".{sha[:7]}_amd64.deb") for a in assets):
+            continue
         if not any(a.startswith("avernella_") and
                    a.endswith(f".{sha[:7]}_x86_64.flatpak") and
                    a + ".sha256" in assets for a in assets):
