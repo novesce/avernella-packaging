@@ -1,30 +1,71 @@
+# Repackages the verified Ubuntu release, as the AUR's avernella-bin does.
+# scripts/copr-recipe fills in the release; COPR builds it for each Fedora.
 %global debug_package %{nil}
 %global _build_id_links none
+%global __brp_strip %{nil}
+%global __brp_strip_static_archive %{nil}
+%global __brp_strip_comment_note %{nil}
+%global __brp_check_rpaths %{nil}
+# Ubuntu's libvpx.so.12 ships privately in /usr/lib/avernella: Fedora 43
+# and 44 only have libvpx.so.9. It is neither required nor provided.
+%global __requires_exclude ^libvpx\\.so\\.12
+%global __provides_exclude_from ^/usr/lib/avernella/.*$
+%global vpx_deb libvpx12_1.16.0-3_amd64.deb
+%global vpx_sum e1b852dfaa099fbcc60ab08d4e340553a7701c501544089609838c9417ba5fa0
 
 Name:           avernella
 Version:        @VERSION@
-Release:        @RELEASE@
+Release:        1%{?dist}
 Summary:        Independent Linux desktop client compatible with LINE
 
 License:        GPL-3.0-or-later AND MIT AND BSD-3-Clause
 URL:            https://github.com/novesce/avernella
+Source0:        https://github.com/novesce/avernella-packaging/releases/download/avernella-@SHA@/@DEB@
+# Ubuntu 26.04's libvpx, the build the release above links against.
+Source1:        https://launchpad.net/ubuntu/+archive/primary/+files/%{vpx_deb}
+ExclusiveArch:  x86_64
 
+BuildRequires:  bsdtar
+BuildRequires:  patchelf
+# Other shared library requirements come from the ELF dependencies.
 Recommends:     xdg-desktop-portal
 Recommends:     vulkan-loader
-Suggests:       ffmpeg-free
+Recommends:     ffmpeg-free
+Suggests:       zbar-libs
 
 %description
 Avernella is an independent native C Linux desktop client compatible with LINE
 personal accounts. Includes the native Vulkan renderer module and the in-app
 LIFF browser helper.
 
-Built from https://github.com/novesce/avernella/commit/@COMMIT@.
+Repackaged from the verified Ubuntu release built from
+https://github.com/novesce/avernella/commit/@SHA@
+(SHA-256 @SUM@), with Ubuntu's libvpx 1.16.
+
+%prep
+%setup -q -c -T
+echo '@SUM@  %{SOURCE0}' | sha256sum --strict --check
+echo '%{vpx_sum}  %{SOURCE1}' | sha256sum --strict --check
+mkdir root vpx
+bsdtar -xf %{SOURCE0} 'data.tar.*'
+bsdtar --no-same-owner -xf data.tar.* -C root
+rm data.tar.*
+bsdtar -xf %{SOURCE1} 'data.tar.*'
+bsdtar --no-same-owner -xf data.tar.* -C vpx
 
 %install
-cp -a %{_sourcedir}/root/. %{buildroot}/
+cp -a root/. %{buildroot}/
+install -Dm755 vpx/usr/lib/x86_64-linux-gnu/libvpx.so.12.0.0 \
+    %{buildroot}/usr/lib/avernella/libvpx.so.12
+patchelf --set-rpath /usr/lib/avernella %{buildroot}/usr/bin/avernella
+install -Dm644 root/usr/share/doc/avernella/copyright \
+    %{buildroot}%{_licensedir}/%{name}/LICENSE
+install -Dm644 vpx/usr/share/doc/libvpx12/copyright \
+    %{buildroot}%{_licensedir}/%{name}/libvpx-copyright
 
 %files
-%license /usr/share/licenses/avernella/*
+%license %{_licensedir}/%{name}/
+%doc /usr/share/doc/avernella/
 /usr/bin/avernella
 /usr/lib/avernella/
 /usr/share/applications/avernella.desktop

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Render the Fedora spec that repackages one verified Ubuntu release.
+file=${1:?Debian asset name required}
+sha=${2:?Source revision required}
+sum=${3:?Asset SHA-256 required}
+out=${4:?Output directory required}
+template=$(dirname "$0")/../rpm/avernella.spec.in
+
+[[ "$sha" =~ ^[a-f0-9]{40}$ && "$sum" =~ ^[a-f0-9]{64}$ ]]
+[[ "$file" =~ ^avernella_0\.1\+(git[1-9][0-9]*\.([0-9a-f]{7}))_amd64\.deb$ ]]
+[[ "${BASH_REMATCH[2]}" == "${sha:0:7}" ]]
+# RPM sorts 0.1^git<n> after 0.1 and after the earlier self-built RPMs.
+version="0.1^${BASH_REMATCH[1]}"
+
+mkdir -p "$out"
+sed -e "s/@VERSION@/$version/g" -e "s/@SHA@/$sha/g" -e "s/@DEB@/$file/g" \
+    -e "s/@SUM@/$sum/g" "$template" > "$out/avernella.spec"
+! grep -q '@[A-Z]*@' "$out/avernella.spec"

@@ -14,13 +14,14 @@ WORKLIST = runpy.run_path(str(ROOT / "scripts/pending-formats"))["worklist"]
 
 
 class PackageQueue(unittest.TestCase):
-    def test_independent_formats(self):
+    def test_flatpak_queue(self):
         first, second, third = (c * 40 for c in "abc")
+        # Old per-commit RPMs no longer count as anything pending.
         rpm = f"avernella-0.1.git77.{first[:7]}-1.x86_64.rpm"
         flat = f"avernella_0.1+git78.{second[:7]}_x86_64.flatpak"
         releases = {"avernella-" + first: {rpm}, "avernella-" + second: {flat}}
         pending = WORKLIST([first, second, third], releases)
-        self.assertEqual(pending["rpm"], [second, third])
+        self.assertEqual(list(pending), ["flatpak"])
         self.assertEqual(pending["flatpak"], [first, second, third])
         releases["avernella-" + second].add(flat + ".sha256")
         self.assertEqual(WORKLIST([first, second, third], releases)["flatpak"],

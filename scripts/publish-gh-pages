@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mode="${1:?Usage: publish-gh-pages <flatpak|rpm> <payload-dir> <version> <sha>}"
+mode="${1:?Usage: publish-gh-pages flatpak <payload-dir> <version> <sha>}"
 payload=$(realpath "${2:?Payload directory is required}")
 version="${3:?Version is required}"
 sha="${4:?Commit SHA is required}"
@@ -16,7 +16,7 @@ git_remote() {
     git -c 'credential.https://github.com.helper=!gh auth git-credential' "$@"
 }
 
-if [[ "$mode" != "flatpak" && "$mode" != "rpm" ]]; then
+if [[ "$mode" != "flatpak" ]]; then
     echo "Unknown mode: $mode" >&2
     exit 1
 fi
@@ -27,27 +27,15 @@ trap 'rm -rf -- "$scratch"' EXIT
 write_site_files() {
     local dir="$1"
     touch "$dir/.nojekyll"
-    if [[ "$mode" == "flatpak" ]]; then
-        rm -rf "$dir/repo"
-        cp -a "$payload" "$dir/repo"
-        cat > "$dir/avernella.flatpakrepo" <<'REPO'
+    rm -rf "$dir/repo"
+    cp -a "$payload" "$dir/repo"
+    cat > "$dir/avernella.flatpakrepo" <<'REPO'
 [Flatpak Repo]
 Title=Avernella
 Comment=Avernella desktop client for LINE
 Url=https://novesce.github.io/avernella-packaging/repo
 Homepage=https://github.com/novesce/avernella
 REPO
-    else
-        rm -rf "$dir/rpm"
-        cp -a "$payload" "$dir/rpm"
-        cat > "$dir/avernella.repo" <<'REPO'
-[avernella]
-name=Avernella for Fedora ($basearch)
-baseurl=https://novesce.github.io/avernella-packaging/rpm/fedora/$basearch/
-enabled=1
-gpgcheck=0
-REPO
-    fi
 
     cat > "$dir/index.html" <<HTML
 <!doctype html>
@@ -56,9 +44,9 @@ REPO
 <h1>Avernella Package Repositories</h1>
 <p>Latest published build: <code>${version}</code> (<a href="https://github.com/novesce/avernella/commit/${sha}">${sha:0:7}</a>)</p>
 
-<h2>Fedora (DNF / RPM Repository)</h2>
-<pre>sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
-sudo dnf install -y avernella</pre>
+<h2>Fedora (COPR)</h2>
+<pre>sudo dnf copr enable novesce/avernella
+sudo dnf install avernella</pre>
 
 <h2>Flatpak (GNOME 49 Runtime)</h2>
 <pre>flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo

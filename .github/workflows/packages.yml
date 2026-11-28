@@ -7,12 +7,9 @@ on:
       - 'liney/**'
       - '.github/workflows/liney-aur.yml'
       - 'flatpak/**'
-      - 'rpm/**'
       - 'scripts/flatpak-recipe'
-      - 'scripts/rpm'
       - 'scripts/publish-gh-pages'
       - '.github/workflows/flatpak.yml'
-      - '.github/workflows/fedora-rpm.yml'
   schedule:
     - cron: '7,27,47 * * * *'
   workflow_dispatch:
@@ -214,3 +211,128 @@ jobs:
           else
             echo 'Arch package validated. Configure AUR_SSH_PRIVATE_KEY to enable AUR updates.'
           fi
+
+  # Fedora: COPR builds an RPM that repackages the verified Debian release,
+  # with Ubuntu's libvpx.so.12 bundled for Fedora 43 and 44.
+  fedora-plan:
+    needs: latest
+    if: needs.latest.outputs.sha != ''
+    outputs:
+      validated: ${{ steps.plan.outputs.validated }}
+    env:
+      SHA: ${{ needs.latest.outputs.sha }}
+      FILE: ${{ needs.latest.outputs.file }}
+      HASH: ${{ needs.latest.outputs.hash }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the latest release against COPR
+        id: plan
+        run: |
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$HASH" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$FILE" =~ ^avernella_0\.1\+(git[1-9][0-9]*\.([0-9a-f]{7}))_amd64\.deb$ ]]
+          [[ "${BASH_REMATCH[2]}" == "${SHA:0:7}" ]]
+          version="0.1^${BASH_REMATCH[1]}"
+          current=$(curl --silent --show-error --retry 3 --get \
+            --data-urlencode ownername=novesce --data-urlencode projectname=avernella \
+            --data-urlencode packagename=avernella --data-urlencode with_latest_succeeded_build=True \
+            https://copr.fedorainfracloud.org/api_3/package |
+            jq -r '.builds.latest_succeeded.source_package.version // "0"' 2>/dev/null || echo 0)
+          echo "COPR has ${current}; the release is ${version}."
+          if [[ "$current" != "$version"-* || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
+              ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
+            echo 'validated=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download and verify the released Debian asset
+        if: steps.plan.outputs.validated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p out/fedora
+          cd out/fedora
+          gh release download "avernella-$SHA" --repo "$GITHUB_REPOSITORY" --pattern "$FILE"
+          printf '%s  %s\n' "$HASH" "$FILE" | sha256sum --strict --check
+
+      - name: Hand the verified asset to the Fedora checks
+        if: steps.plan.outputs.validated == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-fedora-deb-${{ needs.latest.outputs.sha }}
+          path: out/fedora/${{ needs.latest.outputs.file }}
+          if-no-files-found: error
+          retention-days: 1
+
+  fedora:
+    needs: [latest, fedora-plan]
+    if: needs.fedora-plan.outputs.validated == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['43', '44', '45', 'rawhide']
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:${{ matrix.fedora }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download the verified Debian asset
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-fedora-deb-${{ needs.latest.outputs.sha }}
+          path: out/fedora
+      - name: Build, install and check the RPM on Fedora ${{ matrix.fedora }}
+        env:
+          SHA: ${{ needs.latest.outputs.sha }}
+          HASH: ${{ needs.latest.outputs.hash }}
+        run: |
+          printf '%s  %s\n' "$HASH" out/fedora/avernella_*_amd64.deb | sha256sum --strict --check
+          scripts/fedora-check out/fedora "$SHA"
+      - name: Keep the source RPM for COPR
+        if: matrix.fedora == '44'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-srpm-${{ needs.latest.outputs.sha }}
+          path: out/fedora/avernella-*.src.rpm
+          if-no-files-found: error
+          retention-days: 3
+
+  copr-publish:
+    needs: [latest, fedora]
+    if: needs.fedora.result == 'success'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Download the checked source RPM
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-srpm-${{ needs.latest.outputs.sha }}
+          path: out/srpm
+      - name: Build it in COPR
+        env:
+          SHA: ${{ needs.latest.outputs.sha }}
+          COPR_CONFIG: ${{ secrets.COPR_CONFIG }}
+        run: |
+          latest=$(git ls-remote --exit-code https://github.com/novesce/avernella.git refs/heads/main)
+          if [[ "${latest%%$'\t'*}" != "$SHA" ]]; then
+            echo 'A newer source revision is available. Its run updates COPR.'
+            exit 0
+          fi
+          srpms=(out/srpm/avernella-*.src.rpm)
+          [[ ${#srpms[@]} == 1 && -f "${srpms[0]}" ]]
+          if [[ -z "$COPR_CONFIG" ]]; then
+            echo 'Fedora RPM validated. Configure COPR_CONFIG to enable COPR updates.'
+            exit 0
+          fi
+          umask 077
+          mkdir -p ~/.config
+          printf '%s\n' "$COPR_CONFIG" > ~/.config/copr
+          unset COPR_CONFIG
+          trap 'rm -f ~/.config/copr' EXIT
+          pipx install copr-cli
+          # Waits for every chroot and fails if any build fails.
+          copr-cli build novesce/avernella "${srpms[0]}"

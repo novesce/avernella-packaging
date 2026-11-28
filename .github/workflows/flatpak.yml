@@ -11,10 +11,10 @@ on:
       - 'aur/**'
       - 'rpm/**'
       - 'patches/**'
-      - 'scripts/rpm'
+      - 'scripts/copr-recipe'
+      - 'scripts/fedora-check'
       - '.github/workflows/liney-aur.yml'
       - '.github/workflows/packages.yml'
-      - '.github/workflows/fedora-rpm.yml'
   workflow_call:
     inputs:
       source_sha:

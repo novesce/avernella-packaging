@@ -27,18 +27,26 @@ makepkg -si
 
 The recipe fetches the x86-64 Ubuntu release from GitHub, verifies its SHA-256 checksum and installs its payload as an Arch package. The dependencies include the precise libvpx and OpenSSL library versions used by that release.
 
-## Fedora (RPM / DNF repository)
+## Fedora (COPR)
 
-Install from the auto-updating Fedora DNF repository (works on Fedora 41 and newer, including Fedora 42, 43, 44, 45 / Rawhide, `x86_64` — updates on every Avernella commit):
+Install from the [novesce/avernella COPR](https://copr.fedorainfracloud.org/coprs/novesce/avernella/) on Fedora 43 and newer, including Rawhide (`x86_64`):
 
 ```sh
-sudo curl -fsSL https://novesce.github.io/avernella-packaging/avernella.repo -o /etc/yum.repos.d/avernella.repo
-sudo dnf install -y avernella
+sudo dnf copr enable novesce/avernella
+sudo dnf install avernella
 ```
 
-To update later, run `sudo dnf upgrade avernella`. Standalone `.rpm` files are also published to the [`rpm-latest` release](https://github.com/novesce/avernella-packaging/releases/tag/rpm-latest).
+To update later, run `sudo dnf upgrade avernella`.
 
-The [Fedora RPM workflow](.github/workflows/fedora-rpm.yml) builds a release-independent Fedora `x86_64` RPM on Fedora 41 (statically linking `json-c`, `rnnoise`, and `libvpx` so it avoids SONAME bumps across Fedora releases), verifies installation and `ldd` across Fedora 41, 42, 43, and Rawhide containers, publishes the standalone `.rpm` to Releases, and updates the DNF repository on GitHub Pages.
+The RPM repackages the same verified Ubuntu `.deb` as the default release and the AUR, so every format ships one build. Fedora 43 and 44 have libvpx 1.15 (`libvpx.so.9`) while the release links libvpx 1.16, so the RPM also carries Ubuntu 26.04's `libvpx.so.12`, pinned by SHA-256, privately in `/usr/lib/avernella`. It neither requires nor provides a system libvpx. All other libraries come from Fedora.
+
+If you used the earlier self-hosted DNF repository, remove it and switch to COPR. The package name and version numbering are unchanged, so `dnf` upgrades in place:
+
+```sh
+sudo rm -f /etc/yum.repos.d/avernella.repo
+sudo dnf copr enable novesce/avernella
+sudo dnf upgrade avernella
+```
 
 ## Flatpak (GNOME 49 runtime, with LIFF browser)
 
@@ -73,11 +81,13 @@ The [GitHub Actions workflow](.github/workflows/packages.yml) runs on `ubuntu-la
 
 For immediate builds, configure `PACKAGE_DISPATCH_TOKEN` in the source repository with a fine-grained token scoped to this repository and **Actions: write**. The source workflow dispatches the packaging workflows on `main`. The workflows also run on their regular schedules.
 
-The [desktop format queue](.github/workflows/source-formats.yml) walks upstream history after `d4aaebc` and checks which versioned releases still need an RPM or Flatpak. A multi-commit push schedules each missing source SHA. Each job checks out that SHA and attaches its verified package to the corresponding release. The Debian queue runs independently and checks for the Debian asset, source archive and checksum. Only the current upstream revision updates the rolling RPM and Flatpak channels. The default release and AUR use a verified Debian package.
+The [desktop format queue](.github/workflows/source-formats.yml) walks upstream history after `d4aaebc` and checks which versioned releases still need a Flatpak. A multi-commit push schedules each missing source SHA. Each job checks out that SHA and attaches its verified package to the corresponding release. The Debian queue runs independently and checks for the Debian asset, source archive and checksum. Only the current upstream revision updates the rolling Flatpak channel. The default release, the AUR and COPR use the verified Debian package.
 
-Scheduled checks reconcile unfinished commits every 20 minutes. To run a check immediately, use `gh workflow run packages.yml -R novesce/avernella-packaging` for Debian and `gh workflow run source-formats.yml -R novesce/avernella-packaging` for RPM and Flatpak.
+Scheduled checks reconcile unfinished commits every 20 minutes. To run a check immediately, use `gh workflow run packages.yml -R novesce/avernella-packaging` for Debian and `gh workflow run source-formats.yml -R novesce/avernella-packaging` for Flatpak.
 
 When a newer release is available, the workflow builds the recipe in a clean Arch container, installs it, checks the executable and browser helpers for unresolved libraries and symbols, and runs `avernella --help`. It pushes the verified `PKGBUILD` and `.SRCINFO` to the AUR using the registered maintainer key in the `AUR_SSH_PRIVATE_KEY` packaging repository secret. To regenerate the recipe locally on Arch, run `scripts/aur-recipe path/to/release.deb FULL_APP_COMMIT output-directory`.
+
+For Fedora, the same workflow asks COPR which version it last built. When the release is newer, it renders [`rpm/avernella.spec.in`](rpm/avernella.spec.in) with `scripts/copr-recipe`, then builds, installs and checks the RPM with `scripts/fedora-check` in Fedora 43, 44, 45 and Rawhide containers: no unresolved libraries or symbols, the bundled libvpx in use, and `avernella --help`. Only then does it submit the source RPM with `copr-cli build novesce/avernella`, using the COPR API configuration in the `COPR_CONFIG` packaging repository secret (the contents of `~/.config/copr` from https://copr.fedorainfracloud.org/api/). COPR API tokens expire after 180 days.
 
 The Ubuntu package for source revision `8c8d0f5` backports grayscale text antialiasing on scrollable GPU textures. Its source archive contains the exact patched files, and the installed package includes the diff at `/usr/share/doc/avernella/packaging.patch`.
 

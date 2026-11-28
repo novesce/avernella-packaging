@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run as root inside an ephemeral Fedora container. Builds the COPR recipe
+# from the verified DEB, installs the RPM with its library dependencies and
+# checks the executable and helpers. Writes the source RPM to the directory.
+out=$(realpath "${1:?Directory containing a verified DEB is required}")
+sha=${2:?Full upstream commit is required}
+root=$(realpath "$(dirname "$0")/..")
+debs=("$out"/avernella_*_amd64.deb)
+[[ ${#debs[@]} == 1 && -f "${debs[0]}" ]]
+file=$(basename "${debs[0]}")
+sum=$(sha256sum "${debs[0]}" | cut -d' ' -f1)
+cat /etc/fedora-release
+dnf install -y --setopt=install_weak_deps=False rpm-build bsdtar patchelf
+top=$(mktemp -d)
+"$root/scripts/copr-recipe" "$file" "$sha" "$sum" "$top/SPECS"
+mkdir -p "$top/SOURCES"
+cp "${debs[0]}" "$top/SOURCES/"
+# Ubuntu's libvpx package; %prep checks its pinned SHA-256.
+vpx=$(rpmspec -P "$top/SPECS/avernella.spec" | awk '$1 == "Source1:" {print $2}')
+[[ "$vpx" =~ ^https://launchpad\.net/ubuntu/\+archive/primary/\+files/libvpx12_[0-9.-]+_amd64\.deb$ ]]
+curl -fsSL --retry 3 -o "$top/SOURCES/${vpx##*/}" "$vpx"
+rpmbuild --define "_topdir $top" -ba "$top/SPECS/avernella.spec"
+rpms=("$top"/RPMS/x86_64/avernella-*.rpm)
+srpms=("$top"/SRPMS/avernella-*.src.rpm)
+[[ ${#rpms[@]} == 1 && ${#srpms[@]} == 1 ]]
+rpm -qp --requires "${rpms[0]}"
+dnf install -y --setopt=install_weak_deps=False "${rpms[0]}"
+rpm -V avernella
+helpers=(/usr/lib/avernella/avernella-liff-gtk)
+if [[ -f /usr/lib/avernella/avernella-vulkan.so ]]; then
+    helpers+=(/usr/lib/avernella/avernella-vulkan.so)
+fi
+for elf in /usr/bin/avernella "${helpers[@]}"; do
+    [[ -f "$elf" ]]
+    output=$(LC_ALL=C ldd -r "$elf" 2>&1)
+    if grep -E 'undefined symbol|not found' <<< "$output" >&2; then
+        exit 1
+    fi
+done
+# The bundled libvpx, not a system one, satisfies the release.
+ldd /usr/bin/avernella | grep -q 'libvpx\.so\.12 => /usr/lib/avernella/libvpx\.so\.12'
+! rpm -q --requires avernella | grep -q libvpx
+avernella --help
+cp "${srpms[0]}" "$out/"
