@@ -153,7 +153,7 @@ modules:
     sources:
       - type: git
         url: https://github.com/novesce/avernella.git
-        commit: 050148f3a999bb65ea21001ea9083526516dc59c
+        commit: 06a5c684a6c877f823d3f43c830a695cc55ecc58
       - type: archive
         archive-type: tar-gzip
         url: https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/vulkan-sdk-1.4.363.0
