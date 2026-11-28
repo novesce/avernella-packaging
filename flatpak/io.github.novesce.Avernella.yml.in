@@ -111,7 +111,8 @@ modules:
     buildsystem: simple
     build-commands:
       - pkg-config --atleast-version=0.19 json-c
-      - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode webkitgtk-6.0
+      - pkg-config --exists rnnoise libsrtp2 zbar sdl2 libqrencode webkitgtk-6.0 wayland-client wayland-protocols
+      - command -v wayland-scanner
       - |
         cat > build-glslang.sh <<'EOF'
         #!/bin/sh
