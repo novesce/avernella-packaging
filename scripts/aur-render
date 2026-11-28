@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+file=${1:?Debian asset name required}
+sha=${2:?Source revision required}
+sum=${3:?Asset SHA-256 required}
+info=${4:?Build metadata required}
+out=${5:?Output directory required}
+templates=$(dirname "$0")/../aur
+
+[[ "$sha" =~ ^[a-f0-9]{40}$ && "$sum" =~ ^[a-f0-9]{64}$ ]]
+[[ "$file" =~ ^avernella_(0\.1\+git[1-9][0-9]*\.([0-9a-f]{7}))_amd64\.deb$ ]]
+version=${BASH_REMATCH[1]}
+[[ "${BASH_REMATCH[2]}" == "${sha:0:7}" ]]
+[[ -f "$info" && ! -L "$info" && "$(stat -c %s "$info")" -le 32 ]]
+mapfile -t fields < "$info"
+[[ ${#fields[@]} == 3 && "${fields[0]}" =~ ^[1-9][0-9]{0,3}$ &&
+   "${fields[1]}" =~ ^[1-9][0-9]{0,3}$ && "${fields[2]}" =~ ^[01]$ ]]
+
+mkdir -p "$out"
+replace=(
+    -e "s/@VERSION@/$version/g" -e "s/@SHA@/$sha/g" -e "s/@DEB@/$file/g"
+    -e "s/@SUM@/$sum/g" -e "s/@CRYPTO@/libcrypto.so=${fields[0]}-64/g"
+    -e "s/@VPX@/libvpx.so=${fields[1]}-64/g"
+)
+case "${fields[2]}" in
+    0) srcinfo_wpe='/^@WPE@$/d'; recipe_wpe='s/@WPE@//' ;;
+    1) srcinfo_wpe=$'s/@WPE@/\toptdepends = wpewebkit: Wayland WPE in-app browser/'
+       recipe_wpe="s/@WPE@/ 'wpewebkit: Wayland WPE in-app browser'/" ;;
+esac
+sed "${replace[@]}" -e "$recipe_wpe" "$templates/PKGBUILD.in" > "$out/PKGBUILD"
+sed "${replace[@]}" -e "$srcinfo_wpe" "$templates/SRCINFO.in" > "$out/.SRCINFO"

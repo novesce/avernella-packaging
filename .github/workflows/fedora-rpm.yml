@@ -40,6 +40,7 @@ defaults:
 
 jobs:
   plan:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -73,7 +74,7 @@ jobs:
           dnf install -y \
             git gcc make binutils pkgconf-pkg-config curl tar xz patch which diffutils \
             cmake ninja-build autoconf automake libtool nasm perl \
-            rpm-build desktop-file-utils \
+            rpm-build desktop-file-utils createrepo_c \
             glslang spirv-tools vulkan-loader \
             'pkgconfig(sdl2)' \
             'pkgconfig(wayland-client)' 'pkgconfig(wayland-protocols)' \
@@ -97,7 +98,6 @@ jobs:
 
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
           persist-credentials: false
 
       - name: Build universal Fedora x86_64 RPM
@@ -113,6 +113,22 @@ jobs:
         with:
           name: avernella-rpm-x86_64-${{ needs.plan.outputs.sha }}
           path: out/rpm/avernella-*.rpm
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Produce static DNF repository files
+        run: |
+          arch_dir="out/rpm-site/fedora/x86_64"
+          mkdir -p "$arch_dir"
+          cp out/rpm/avernella-*.rpm "$arch_dir/"
+          createrepo_c --simple-md-filenames "$arch_dir"
+          tar --hard-dereference -C out/rpm-site -cf out/rpm-site.tar .
+
+      - name: Upload static repository files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-rpm-site-${{ needs.plan.outputs.sha }}
+          path: out/rpm-site.tar
           if-no-files-found: error
           retention-days: 14
 
@@ -158,7 +174,6 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
           persist-credentials: false
 
       - name: Download built RPM
@@ -167,19 +182,18 @@ jobs:
           name: avernella-rpm-x86_64-${{ needs.plan.outputs.sha }}
           path: out/release
 
-      - name: Install createrepo_c
+      - name: Bind the RPM filename to the planned source revision
+        env:
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends createrepo-c
-
-      - name: Build DNF repository metadata
-        run: |
-          arch_dir="out/rpm-site/fedora/x86_64"
-          mkdir -p "$arch_dir"
-          cp -f out/release/avernella-*.rpm "$arch_dir/"
-          createrepo_c --simple-md-filenames "$arch_dir"
-          (cd out/release && sha256sum avernella-*.rpm > SHA256SUMS)
-          ls -la out/release "$arch_dir"
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$VERSION" =~ ^0\.1\^git[1-9][0-9]*\.[0-9a-f]{7}$ ]]
+          [[ "${VERSION##*.}" == "${SHA:0:7}" ]]
+          file="avernella-${VERSION/\^/.}-1.x86_64.rpm"
+          cd out/release
+          [[ -f "$file" && ! -L "$file" && -s "$file" ]]
+          sha256sum "$file" > SHA256SUMS
+          echo "rpm=$file" >> "$GITHUB_ENV"
 
       - name: Check whether this source is still current
         id: channel
@@ -210,12 +224,25 @@ jobs:
               gh release delete-asset rpm-latest "$old" -y
             done
             gh release edit rpm-latest --title "Avernella Fedora RPM (${VERSION})" --notes "$notes"
-            gh release upload rpm-latest --clobber out/release/avernella-*.rpm out/release/SHA256SUMS
+            gh release upload rpm-latest --clobber "out/release/$rpm" out/release/SHA256SUMS
           else
             gh release create rpm-latest --latest=false \
               --title "Avernella Fedora RPM (${VERSION})" --notes "$notes" \
-              out/release/avernella-*.rpm out/release/SHA256SUMS
+              "out/release/$rpm" out/release/SHA256SUMS
           fi
+
+      - name: Download static repository files from this run
+        if: steps.channel.outputs.latest == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-rpm-site-${{ needs.plan.outputs.sha }}
+          path: out/site
+      - name: Stage the static DNF files
+        if: steps.channel.outputs.latest == 'true'
+        run: |
+          python3 scripts/unpack-static-repo out/site/rpm-site.tar out/rpm-site
+          test -s out/rpm-site/fedora/x86_64/repodata/repomd.xml
+          (cd out/rpm-site/fedora/x86_64 && sha256sum --strict --check ../../../release/SHA256SUMS)
 
       - name: Publish DNF repository to GitHub Pages
         if: steps.channel.outputs.latest == 'true'
@@ -232,4 +259,4 @@ jobs:
           SHA: ${{ needs.plan.outputs.sha }}
         run: |
           scripts/source-release "$SHA"
-          gh release upload "avernella-$SHA" --clobber out/release/avernella-*.rpm
+          gh release upload "avernella-$SHA" --clobber "out/release/$rpm"

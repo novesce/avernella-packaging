@@ -55,6 +55,22 @@ class PackageQueue(unittest.TestCase):
             self.assertEqual(run(ROOT / "scripts/pending", tmp).splitlines(),
                              commits[1:])
 
+    def test_liney_recipe(self):
+        recipe = ROOT / "liney/recipe"
+        artifacts = ("1" * 64, "2" * 64)
+        rendered = subprocess.check_output([recipe, "0.1.36", *artifacts],
+                                           text=True)
+        self.assertIn("pkgver=0.1.36\n", rendered)
+        self.assertIn(f"sha256sums=('{artifacts[0]}' '{artifacts[1]}')", rendered)
+        self.assertNotIn("@VERSION@", rendered)
+        for version, deb_sum, license_sum in (
+                ("0.01.36", *artifacts), ("0.1.36", "unknown", artifacts[1]),
+                ("0.1.36", artifacts[0], "unknown")):
+            rejected = subprocess.run([recipe, version, deb_sum, license_sum],
+                                      capture_output=True, check=False)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertEqual(rejected.stdout, b"")
+
 
 if __name__ == "__main__":
     unittest.main()

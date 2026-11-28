@@ -2,13 +2,14 @@
 set -euo pipefail
 
 sha=${1:?source commit required}
-[[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+target=${GITHUB_SHA:?Packaging commit required}
+[[ "$sha" =~ ^[a-f0-9]{40}$ && "$target" =~ ^[a-f0-9]{40}$ ]]
 tag=avernella-$sha
 
 # The first verified format creates the release. Other formats may finish at
 # the same time. A failed create is benign only if the release now exists.
 if ! gh release view "$tag" --json tagName >/dev/null 2>&1; then
-    gh release create "$tag" --latest=false --title "Avernella ${sha:0:7}" \
+    gh release create "$tag" --target "$target" --latest=false --title "Avernella ${sha:0:7}" \
         --notes "Verified packages for https://github.com/novesce/avernella/commit/$sha." ||
         gh release view "$tag" --json tagName >/dev/null
 fi

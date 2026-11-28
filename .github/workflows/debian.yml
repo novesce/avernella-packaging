@@ -1,0 +1,148 @@
+name: Build and publish one Avernella Debian revision
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Select source from upstream main
+        env:
+          SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]]
+          git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
+          git -C upstream merge-base --is-ancestor "$SHA" origin/main
+          git -C upstream checkout --quiet --detach "$SHA"
+
+      - name: Install Ubuntu build dependencies
+        run: |
+          cat /etc/os-release
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc make dpkg-dev pkg-config \
+            libsdl2-dev libpango1.0-dev libglib2.0-dev libqrencode-dev \
+            libwayland-dev libwayland-bin wayland-protocols \
+            libcurl4-openssl-dev libssl-dev libturbojpeg0-dev libpng-dev libwebp-dev \
+            libopus-dev libsrtp2-dev zlib1g-dev libvpx-dev libpipewire-0.3-dev libseccomp-dev \
+            libzbar-dev ffmpeg libwebkitgtk-6.0-dev xvfb xauth dbus-daemon python3 \
+            cmake ninja-build autoconf automake libtool glslang-tools spirv-tools libvulkan1
+          if apt-cache show libwpewebkit-2.0-dev >/dev/null 2>&1; then
+            sudo apt-get install -y --no-install-recommends libwpewebkit-2.0-dev || true
+          fi
+          if ! pkg-config --exists wpe-webkit-2.0 wpe-platform-wayland-2.0; then
+            echo 'Building with the WebKitGTK fallback. The WPE Wayland SDK is unavailable.'
+          fi
+
+      - name: Build static dependencies
+        run: |
+          scripts/json-c out/json-c
+          scripts/rnnoise out/rnnoise
+          scripts/vulkan-sdk out/vulkan
+
+      - name: Build, verify and archive the source revision
+        env:
+          SHA: ${{ inputs.source_sha }}
+        run: |
+          dir="$PWD/out/release"
+          scripts/deb upstream "$dir" out/json-c out/rnnoise out/vulkan
+          scripts/ubuntu-check "$dir"
+
+          mkdir -p "$dir/source/avernella/dependencies"
+          git -C upstream archive "$SHA" | tar -xf - -C "$dir/source/avernella"
+          if [[ -s "$dir/packaging.patch" ]]; then
+            patch --quiet -d "$dir/source/avernella" -p1 < "$dir/packaging.patch"
+          fi
+          cp out/{json-c,rnnoise,vulkan}/sources/* "$dir/source/avernella/dependencies/"
+          git archive HEAD --prefix=avernella-packaging/ | tar -xf - -C "$dir/source"
+          tar -C "$dir/source" -czf "$dir/avernella-source.tar.gz" avernella avernella-packaging
+          . /etc/os-release
+          [[ -n "$PRETTY_NAME" ]]
+          printf '%s\n' "$PRETTY_NAME" > "$dir/build-platform"
+
+      - name: Upload verified Debian package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-debian-${{ inputs.source_sha }}
+          path: |
+            out/release/avernella_*_amd64.deb
+            out/release/avernella-source.tar.gz
+            out/release/build-platform
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download the package from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-debian-${{ inputs.source_sha }}
+          path: out/release
+      - name: Bind release assets to the source revision
+        id: assets
+        env:
+          SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]]
+          git clone --quiet --no-checkout --branch main https://github.com/novesce/avernella.git upstream
+          git -C upstream merge-base --is-ancestor "$SHA" origin/main
+          revision=$(git -C upstream rev-list --count "$SHA")
+          version="0.1+git$revision.${SHA:0:7}"
+          deb="avernella_${version}_amd64.deb"
+          (
+            cd out/release
+            for file in "$deb" avernella-source.tar.gz build-platform; do
+              [[ -f "$file" && ! -L "$file" && -s "$file" ]]
+            done
+            [[ "$(stat -c %s build-platform)" -le 128 ]]
+            platform=$(cat build-platform)
+            valid_platform='^[a-zA-Z0-9 .()+_-]+$'
+            [[ "$platform" =~ $valid_platform ]]
+            sha256sum "$deb" avernella-source.tar.gz > SHA256SUMS
+          )
+          {
+            echo "deb=$deb"
+            echo "version=$version"
+            echo "platform=$(cat out/release/build-platform)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish verified Debian package and corresponding source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.source_sha }}
+          DEB: ${{ steps.assets.outputs.deb }}
+          VERSION: ${{ steps.assets.outputs.version }}
+          PLATFORM: ${{ steps.assets.outputs.platform }}
+        run: |
+          notes="Built on $PLATFORM (GitHub ubuntu-latest, amd64) from https://github.com/novesce/avernella/commit/$SHA."
+          if [[ "$SHA" == 8c8d0f5bc8659eb7f27f31d12efd302a2a753376 ]]; then
+            notes+=" Includes the Ubuntu scrolling fix. The installed package contains the applied diff in /usr/share/doc/avernella/packaging.patch, and the source archive includes the patched sources."
+          fi
+          scripts/source-release "$SHA"
+          gh release edit "avernella-$SHA" --title "Avernella $VERSION" --notes "$notes"
+          gh release upload "avernella-$SHA" --clobber "out/release/$DEB" \
+            out/release/avernella-source.tar.gz out/release/SHA256SUMS

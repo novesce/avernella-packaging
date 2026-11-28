@@ -75,21 +75,18 @@ jobs:
           test "$(dpkg-deb -f "$deb" Version)" = "$VERSION"
           test "$(dpkg-deb -f "$deb" Architecture)" = amd64
           test "$(dpkg-deb -f "$deb" License)" = LicenseRef-TLL-1.0
-          license_sum=$(sha256sum "$license" | cut -d ' ' -f1)
-          sed -e "s/@VERSION@/$VERSION/g" -e "s/@DEB_SHA256@/$DEB_SUM/g" \
-              -e "s/@LICENSE_SHA256@/$license_sum/g" "$GITHUB_WORKSPACE/liney/PKGBUILD.in" > PKGBUILD
+          sha256sum "$license" | cut -d ' ' -f1 > license.sha256
+          "$GITHUB_WORKSPACE/liney/recipe" "$VERSION" "$DEB_SUM" \
+            "$(<license.sha256)" > PKGBUILD
       - name: Build and check the Arch package
         run: |
-          docker run --rm -v "$PWD:/recipe:ro" -v "$RUNNER_TEMP/liney:/out" \
+          docker run --rm -v "$PWD:/recipe:ro" -v "$RUNNER_TEMP/liney:/out:ro" \
             archlinux:base-devel /recipe/liney/arch-check /out
-      - name: Save the validated AUR files
+      - name: Record the verified license digest
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: liney-${{ matrix.release.version }}
-          path: |
-            ${{ runner.temp }}/liney/PKGBUILD
-            ${{ runner.temp }}/liney/.SRCINFO
-          include-hidden-files: true
+          path: ${{ runner.temp }}/liney/license.sha256
           if-no-files-found: error
           retention-days: 3
 
@@ -108,13 +105,35 @@ jobs:
         with:
           pattern: liney-*
           path: ${{ runner.temp }}/recipes
+      - name: Recreate recipes from reviewed templates
+        env:
+          RELEASES: ${{ needs.discover.outputs.releases }}
+        run: |
+          while IFS=$'\t' read -r version deb_sum; do
+            [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            dir="$RUNNER_TEMP/recipes/liney-$version"
+            test -f "$dir/license.sha256" && test ! -L "$dir/license.sha256" &&
+              test "$(wc -c < "$dir/license.sha256")" -eq 65 || {
+                echo "::error::No validated license digest for v$version."
+                break
+              }
+            recipe="$RUNNER_TEMP/verified-recipes/$version"
+            mkdir -p "$recipe"
+            liney/recipe "$version" "$deb_sum" "$(< "$dir/license.sha256")" > "$recipe/PKGBUILD"
+            docker run --rm --user nobody --network none --cap-drop ALL \
+              --security-opt no-new-privileges \
+              -v "$recipe/PKGBUILD:/recipe/PKGBUILD:ro" -w /recipe \
+              archlinux:base-devel makepkg --printsrcinfo > "$recipe/.SRCINFO"
+          done < <(jq -r '.[] | [.version, .sha256] | @tsv' <<< "$RELEASES")
+
       - name: Publish verified releases in version order
         env:
           RELEASES: ${{ needs.discover.outputs.releases }}
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |
           while read -r version; do
-            dir="$RUNNER_TEMP/recipes/liney-$version"
+            [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            dir="$RUNNER_TEMP/verified-recipes/$version"
             test -f "$dir/PKGBUILD" && test -f "$dir/.SRCINFO" || {
               echo "::error::No validated recipe for v$version. Later versions will wait."
               exit 1

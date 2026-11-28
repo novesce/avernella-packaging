@@ -3,7 +3,6 @@ name: Build Avernella Debian packages
 on:
   push:
     branches: [main]
-    tags: ['avernella-source-*']
     paths-ignore:
       - 'liney/**'
       - '.github/workflows/liney-aur.yml'
@@ -30,114 +29,92 @@ defaults:
     shell: bash
 
 jobs:
-  package:
-    permissions:
-      contents: write
+  plan:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
+    outputs:
+      shas: ${{ steps.queue.outputs.shas }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-
+      - name: Check publisher input validation
+        run: python3 tests/release-boundaries.py
       - name: Find app commits without a release
-        id: plan
+        id: queue
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git clone --quiet --branch main https://github.com/novesce/avernella.git upstream
           scripts/pending upstream > pending
-          if [[ -s pending ]]; then
-            echo 'build=true' >> "$GITHUB_OUTPUT"
-          fi
+          shas=$(jq -Rsc 'split("\n") | map(select(length > 0)) | .[:32]' pending)
+          echo "shas=$shas" >> "$GITHUB_OUTPUT"
 
-      - name: Install Ubuntu build dependencies
-        if: steps.plan.outputs.build == 'true'
-        run: |
-          cat /etc/os-release
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc make dpkg-dev pkg-config \
-            libsdl2-dev libpango1.0-dev libglib2.0-dev libqrencode-dev \
-            libwayland-dev libwayland-bin wayland-protocols \
-            libcurl4-openssl-dev libssl-dev libturbojpeg0-dev libpng-dev libwebp-dev \
-            libopus-dev libsrtp2-dev zlib1g-dev libvpx-dev libpipewire-0.3-dev libseccomp-dev \
-            libzbar-dev ffmpeg libwebkitgtk-6.0-dev xvfb xauth dbus-daemon python3 \
-            cmake ninja-build autoconf automake libtool glslang-tools spirv-tools libvulkan1
-          if apt-cache show libwpewebkit-2.0-dev >/dev/null 2>&1; then
-            sudo apt-get install -y --no-install-recommends libwpewebkit-2.0-dev || true
-          fi
-          if ! pkg-config --exists wpe-webkit-2.0 wpe-platform-wayland-2.0; then
-            echo 'Building with the WebKitGTK fallback. The WPE Wayland SDK is unavailable.'
-          fi
+  package:
+    needs: plan
+    if: needs.plan.outputs.shas != '[]'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        sha: ${{ fromJSON(needs.plan.outputs.shas) }}
+    uses: ./.github/workflows/debian.yml
+    with:
+      source_sha: ${{ matrix.sha }}
 
-      - name: Build static dependencies
-        if: steps.plan.outputs.build == 'true'
-        run: |
-          scripts/json-c out/json-c
-          scripts/rnnoise out/rnnoise
-          scripts/vulkan-sdk out/vulkan
-
-      - name: Build, verify and publish each source revision
-        if: steps.plan.outputs.build == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          failed=0
-          while IFS= read -r sha; do
-            dir="$PWD/out/$sha"
-            git -C upstream checkout --quiet --detach "$sha"
-            git -C upstream clean -ffdx
-            # Never give upstream build/test code the release credential.
-            if ! env -u GH_TOKEN scripts/deb upstream "$dir" out/json-c out/rnnoise out/vulkan ||
-                ! env -u GH_TOKEN scripts/ubuntu-check "$dir"; then
-              echo "::error::Packaging failed for $sha. A later run will retry it."
-              failed=1
-              continue
-            fi
-            mkdir -p "$dir/source/avernella/dependencies"
-            git -C upstream archive "$sha" | tar -xf - -C "$dir/source/avernella"
-            if [[ -s "$dir/packaging.patch" ]]; then
-              patch --quiet -d "$dir/source/avernella" -p1 < "$dir/packaging.patch"
-            fi
-            cp out/{json-c,rnnoise,vulkan}/sources/* "$dir/source/avernella/dependencies/"
-            git archive HEAD --prefix=avernella-packaging/ | tar -xf - -C "$dir/source"
-            tar -C "$dir/source" -czf "$dir/avernella-source.tar.gz" avernella avernella-packaging
-            read -r deb < "$dir/deb-name"
-            read -r version < "$dir/version"
-            assets=("$deb" avernella-source.tar.gz)
-            (cd "$dir" && sha256sum "${assets[@]}" > SHA256SUMS)
-            . /etc/os-release
-            notes="Built on $PRETTY_NAME (GitHub ubuntu-latest, amd64) from https://github.com/novesce/avernella/commit/$sha."
-            if [[ -s "$dir/packaging.patch" ]]; then
-              notes+=" Includes the Ubuntu scrolling fix. The installed package contains the applied diff in /usr/share/doc/avernella/packaging.patch, and the source archive includes the patched sources."
-            fi
-            scripts/source-release "$sha"
-            gh release edit "avernella-$sha" --title "Avernella $version" --notes "$notes"
-            gh release upload "avernella-$sha" --clobber "${assets[@]/#/$dir/}" "$dir/SHA256SUMS"
-            # A runner timeout must leave completed commits available for the
-            # next reconciliation without retaining an entire build per SHA.
-            rm -rf -- "$dir/source"
-          done < pending
-          exit "$failed"
-
+  latest:
+    needs: [plan, package]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+      file: ${{ steps.release.outputs.file }}
+      hash: ${{ steps.release.outputs.hash }}
+    steps:
       - name: Mark the current verified Debian release as latest
-        if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git -C upstream fetch --quiet origin main
+          git clone --quiet --no-checkout --branch main https://github.com/novesce/avernella.git upstream
           sha=$(git -C upstream rev-parse origin/main)
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          revision=$(git -C upstream rev-list --count "$sha")
           tag="avernella-$sha"
-          if [[ "$(gh release view --json tagName --jq .tagName)" != "$tag" ]] &&
-              gh release view "$tag" --json assets |
-              jq -e '[.assets[] | select(.state == "uploaded" and .size > 0) | .name] |
-                     index("SHA256SUMS") and index("avernella-source.tar.gz") and
-                     any(.[]; startswith("avernella_") and endswith("_amd64.deb"))' >/dev/null; then
-            gh release edit "$tag" --latest
+          file="avernella_0.1+git$revision.${sha:0:7}_amd64.deb"
+          if ! release=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets,isDraft); then
+            exit 0
           fi
+          if ! jq -e --arg file "$file" '.isDraft == false and
+              ([.assets[] | select(.state == "uploaded" and .size > 0) | .name] |
+              index("SHA256SUMS") and index("avernella-source.tar.gz") and index($file))' \
+              <<< "$release" >/dev/null; then
+            exit 0
+          fi
+          digest=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" |
+            jq -er --arg file "$file" '.assets[] | select(.state == "uploaded" and .name == $file) | .digest')
+          [[ "$digest" =~ ^sha256:([a-f0-9]{64})$ ]]
+          hash=${BASH_REMATCH[1]}
+          if [[ "$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)" != "$tag" ]]; then
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --latest
+          fi
+          printf 'sha=%s\nfile=%s\nhash=%s\n' "$sha" "$file" "$hash" >> "$GITHUB_OUTPUT"
 
   arch:
-    needs: package
+    needs: latest
+    if: needs.latest.outputs.sha != ''
+    outputs:
+      validated: ${{ steps.plan.outputs.validated }}
+    env:
+      SHA: ${{ needs.latest.outputs.sha }}
+      FILE: ${{ needs.latest.outputs.file }}
+      HASH: ${{ needs.latest.outputs.hash }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -150,14 +127,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release=$(gh release view --json tagName,assets)
-          tag=$(jq -er '.tagName' <<< "$release")
-          file=$(jq -er '[.assets[].name | select(endswith("_amd64.deb"))] | select(length == 1) | .[0]' <<< "$release")
-          [[ "$tag" =~ ^avernella-([a-f0-9]{40})$ ]]
-          sha=${BASH_REMATCH[1]}
-          [[ "$file" =~ ^avernella_(0\.1\+git[1-9][0-9]*\.([0-9a-f]{7}))_amd64\.deb$ ]]
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$HASH" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$FILE" =~ ^avernella_(0\.1\+git[1-9][0-9]*\.([0-9a-f]{7}))_amd64\.deb$ ]]
           version=${BASH_REMATCH[1]}
-          [[ "${BASH_REMATCH[2]}" == "${sha:0:7}" ]]
+          [[ "${BASH_REMATCH[2]}" == "${SHA:0:7}" ]]
           rel=$(sed -nE 's/^pkgrel=([0-9]+)$/\1/p' aur/PKGBUILD.in)
           [[ -n "$rel" ]]
           current=$(curl --fail --silent --show-error --retry 3 --get \
@@ -167,34 +140,72 @@ jobs:
             echo 'The AUR already has a newer release.'
           elif [[ "$current" != "$version-$rel" || "$GITHUB_EVENT_NAME" == workflow_dispatch ||
               ( "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ) ]]; then
-            printf 'sha=%s\nfile=%s\n' "$sha" "$file" >> "$GITHUB_OUTPUT"
+            echo 'validated=true' >> "$GITHUB_OUTPUT"
           fi
 
       - name: Verify the released Debian asset
-        if: steps.plan.outputs.sha != ''
+        if: steps.plan.outputs.validated == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ steps.plan.outputs.sha }}
-          FILE: ${{ steps.plan.outputs.file }}
         run: |
           mkdir -p out/aur
           cd out/aur
           gh release download "avernella-$SHA" --pattern "$FILE" --pattern SHA256SUMS
           hash=$(awk -v file="$FILE" '$2 == file {print $1}' SHA256SUMS)
-          [[ "$hash" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$hash" == "$HASH" ]]
           printf '%s  %s\n' "$hash" "$FILE" | sha256sum --strict --check
 
       - name: Build, install and check relocations on Arch Linux
-        if: steps.plan.outputs.sha != ''
-        env:
-          SHA: ${{ steps.plan.outputs.sha }}
+        if: steps.plan.outputs.validated == 'true'
         run: |
           docker run --rm --pull=always \
             -v "$PWD:/recipe:ro" -v "$PWD/out/aur:/out" \
             archlinux:base-devel /recipe/scripts/arch-check /out "$SHA"
 
+      - name: Upload verification metadata
+        if: steps.plan.outputs.validated == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-aur-${{ needs.latest.outputs.sha }}
+          path: out/aur/build-info
+          if-no-files-found: error
+          retention-days: 1
+
+  aur-publish:
+    needs: [arch, latest]
+    if: needs.arch.outputs.validated == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Download metadata from the Arch verification job
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-aur-${{ needs.latest.outputs.sha }}
+          path: out/verified
+      - name: Recreate the verified recipe from the trusted template
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.latest.outputs.sha }}
+          FILE: ${{ needs.latest.outputs.file }}
+          HASH: ${{ needs.latest.outputs.hash }}
+        run: |
+          latest=$(git ls-remote --exit-code https://github.com/novesce/avernella.git refs/heads/main)
+          [[ "${latest%%$'\t'*}" == "$SHA" ]] || exit 0
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ && "$HASH" =~ ^[a-f0-9]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/avernella-$SHA" |
+            jq -r --arg file "$FILE" '.assets[] | select(.state == "uploaded" and .name == $file) | .digest' |
+            grep -Fx "sha256:$HASH"
+          scripts/aur-render "$FILE" "$SHA" "$HASH" out/verified/build-info out/aur
+          echo 'current=true' >> "$GITHUB_OUTPUT"
+
       - name: Publish the verified AUR recipe
-        if: steps.plan.outputs.sha != ''
+        if: steps.prepare.outputs.current == 'true'
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |

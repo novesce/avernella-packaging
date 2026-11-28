@@ -28,6 +28,19 @@ if [[ "$package" == liney-bin && -f .SRCINFO ]]; then
         exit 0
     fi
 fi
+if [[ "$package" == avernella-bin && -f .SRCINFO ]]; then
+    grep -Fxq 'pkgbase = avernella-bin' .SRCINFO
+    current=$(awk '$1 == "pkgver" {print $3; exit}' .SRCINFO)
+    current_rel=$(awk '$1 == "pkgrel" {print $3; exit}' .SRCINFO)
+    release=$(awk '$1 == "pkgrel" {print $3; exit}' "$dir/.SRCINFO")
+    [[ "$current" =~ ^0\.1\+git[1-9][0-9]*\.[a-f0-9]{7}$ ]]
+    [[ "$version" =~ ^0\.1\+git[1-9][0-9]*\.[a-f0-9]{7}$ ]]
+    [[ "$current_rel" =~ ^[1-9][0-9]*$ && "$release" =~ ^[1-9][0-9]*$ ]]
+    if dpkg --compare-versions "$current-$current_rel" gt "$version-$release"; then
+        echo "The AUR already has a newer Avernella release."
+        exit 0
+    fi
+fi
 install -m644 "$dir"/{PKGBUILD,.SRCINFO} .
 git add -- PKGBUILD .SRCINFO
 if git diff --cached --quiet; then

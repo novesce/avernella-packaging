@@ -4,7 +4,7 @@ set -euo pipefail
 deb=$(realpath "${1:?Path to an Avernella amd64 DEB is required}")
 sha=${2:?Full source commit is required}
 out=$(realpath -m "${3:?Recipe output directory is required}")
-template=$(dirname "$0")/../aur/PKGBUILD.in
+renderer=$(dirname "$0")/aur-render
 file=${deb##*/}
 [[ "$sha" =~ ^[a-f0-9]{40}$ && "$file" =~ ^avernella_(0\.1\+git[1-9][0-9]*\.([a-f0-9]{7}))_amd64\.deb$ ]]
 version=${BASH_REMATCH[1]}
@@ -19,18 +19,16 @@ soname() {
     local major
     major=$(sed -nE "s/.*\\(NEEDED\\).*\\[$1\\.so\\.([0-9]+)\\].*/\\1/p" <<< "$needed")
     [[ "$major" =~ ^[0-9]+$ ]] || { echo "Missing or ambiguous $1 SONAME" >&2; return 1; }
-    printf '%s.so=%s-64' "$1" "$major"
+    printf '%s' "$major"
 }
 crypto=$(soname libcrypto)
 vpx=$(soname libvpx)
-wpe=''
+wpe=0
 if [[ -x "$scratch/usr/lib/avernella/avernella-liff" ]]; then
-    wpe=" 'wpewebkit: Wayland WPE in-app browser'"
+    wpe=1
 fi
 sum=$(sha256sum "$deb")
 mkdir -p "$out"
-sed -e "s/@VERSION@/$version/g" -e "s/@SHA@/$sha/g" -e "s/@DEB@/$file/g" \
-    -e "s/@SUM@/${sum%% *}/g" -e "s/@CRYPTO@/$crypto/g" -e "s/@VPX@/$vpx/g" \
-    -e "s/@WPE@/$wpe/g" "$template" > "$scratch/PKGBUILD"
-(cd "$scratch" && makepkg --printsrcinfo > .SRCINFO)
-install -m644 "$scratch"/{PKGBUILD,.SRCINFO} "$out/"
+printf '%s\n' "$crypto" "$vpx" "$wpe" > "$out/build-info"
+"$renderer" "$file" "$sha" "${sum%% *}" "$out/build-info" "$out"
+(cd "$out" && makepkg --printsrcinfo | diff -u .SRCINFO -)

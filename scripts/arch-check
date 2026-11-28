@@ -36,4 +36,4 @@ for elf in /usr/bin/avernella "${helpers[@]}"; do
     fi
 done
 avernella --help
-install -m644 PKGBUILD .SRCINFO "$out/"
+install -m644 build-info "$out/"

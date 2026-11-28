@@ -52,4 +52,3 @@ for elf in "$app/liney" "$app/chrome-sandbox" "$app/chrome_crashpad_handler" \
     # Have the trusted glibc loader resolve dependencies without running the application.
     runuser -u builder -- /usr/lib/ld-linux-x86-64.so.2 --list "$elf" > /dev/null
 done
-install -m644 .SRCINFO "$out/.SRCINFO"

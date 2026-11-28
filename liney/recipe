@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+version=${1:?Liney version required}
+deb_sum=${2:?Debian package digest required}
+license_sum=${3:?License digest required}
+number='(0|[1-9][0-9]*)'
+[[ $version =~ ^$number\.$number\.$number$ &&
+   $deb_sum =~ ^[0-9a-f]{64}$ && $license_sum =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Invalid Liney release metadata." >&2
+    exit 1
+}
+
+sed -e "s/@VERSION@/$version/g" -e "s/@DEB_SHA256@/$deb_sum/g" \
+    -e "s/@LICENSE_SHA256@/$license_sum/g" "$(dirname "$0")/PKGBUILD.in"

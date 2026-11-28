@@ -59,7 +59,8 @@ rpmbuild --define "_topdir $topdir" -bb "$topdir/SPECS/avernella.spec"
 
 rpm_path=$(find "$topdir/RPMS" -type f -name 'avernella-*.rpm' | head -n 1)
 test -n "$rpm_path"
-rpm_name=$(basename "$rpm_path")
+# Keep the caret in RPM metadata and use a release-safe asset name.
+rpm_name="avernella-${version/\^/.}-1.x86_64.rpm"
 cp -f "$rpm_path" "$out/$rpm_name"
 printf '%s\n' "$rpm_name" > "$out/rpm-name"
 printf '%s\n' "$version" > "$out/version"

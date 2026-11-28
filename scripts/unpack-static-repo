@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+"""Extract only ordinary static repository files in a fresh directory."""
+from pathlib import Path, PurePosixPath
+import re
+import sys
+import tarfile
+
+COMPONENT = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.+-]*\Z")
+
+
+def unpack(archive, directory):
+    if not archive.is_file() or archive.is_symlink():
+        raise ValueError("Expected a regular static repository archive")
+    directory.mkdir()
+    paths = set()
+    with tarfile.open(archive, mode="r:") as payload:
+        for member in payload:
+            path = PurePosixPath(member.name)
+            if member.name in (".", "./") and member.isdir():
+                continue
+            if (not path.parts or any(not COMPONENT.fullmatch(p) for p in path.parts)
+                    or path in paths or member.sparse is not None
+                    or not (member.isdir() or member.isreg())):
+                raise ValueError("Unexpected static repository archive entry")
+            paths.add(path)
+            # The archive supplies data only. Use local owner and modes.
+            payload.extract(member, directory, filter="data", set_attrs=False)
+
+
+if __name__ == "__main__":
+    unpack(Path(sys.argv[1]), Path(sys.argv[2]))

@@ -32,20 +32,24 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  flatpak:
+  build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      version: ${{ steps.plan.outputs.version }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: main
+          persist-credentials: false
 
       - name: Select Avernella source commit
         id: plan
@@ -101,7 +105,6 @@ jobs:
           flatpak build-bundle out/flatpak/repo "out/flatpak/$bundle" \
             io.github.novesce.Avernella \
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
-          (cd out/flatpak && sha256sum "$bundle" > "${bundle}.sha256")
           echo "bundle=$bundle" >> "$GITHUB_ENV"
 
       - name: Smoke-test installed Flatpak
@@ -119,17 +122,59 @@ jobs:
       - name: Upload Flatpak bundle artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: avernella-flatpak-${{ steps.plan.outputs.version }}
-          path: |
-            out/flatpak/${{ env.bundle }}
-            out/flatpak/${{ env.bundle }}.sha256
+          name: avernella-flatpak-${{ steps.plan.outputs.sha }}
+          path: out/flatpak/${{ env.bundle }}
           if-no-files-found: error
           retention-days: 14
 
+      - name: Archive the OSTree files for static hosting
+        run: |
+          # OSTree's local advisory lock is not part of an HTTP repository.
+          tar --hard-dereference --exclude='./.lock' -C out/flatpak/repo -cf out/flatpak/ostree.tar .
+
+      - name: Upload OSTree files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: avernella-ostree-${{ steps.plan.outputs.sha }}
+          path: out/flatpak/ostree.tar
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SHA: ${{ needs.build.outputs.sha }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Recheck the source and derive the asset filename
+        run: |
+          [[ "$SHA" =~ ^[a-f0-9]{40}$ ]]
+          git clone --quiet --no-checkout --branch main https://github.com/novesce/avernella.git upstream
+          git -C upstream merge-base --is-ancestor "$SHA" origin/main
+          revision=$(git -C upstream rev-list --count "$SHA")
+          [[ "$VERSION" == "0.1+git$revision.${SHA:0:7}" ]]
+          echo "bundle=avernella_${VERSION}_x86_64.flatpak" >> "$GITHUB_ENV"
+
+      - name: Download bundle from this run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-flatpak-${{ needs.build.outputs.sha }}
+          path: out/flatpak
+      - name: Verify the bundle files
+        run: |
+          cd out/flatpak
+          [[ -f "$bundle" && ! -L "$bundle" && -s "$bundle" ]]
+          sha256sum "$bundle" > "${bundle}.sha256"
+
       - name: Check whether this source is still current
         id: channel
-        env:
-          SHA: ${{ steps.plan.outputs.sha }}
         run: |
           git -C upstream fetch --quiet origin main
           if [[ "$(git -C upstream rev-parse origin/main)" == "$SHA" ]]; then
@@ -140,8 +185,6 @@ jobs:
         if: steps.channel.outputs.latest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ steps.plan.outputs.sha }}
-          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           notes="GNOME 49 runtime Flatpak (with WebKitGTK LIFF browser) for Avernella $VERSION (https://github.com/novesce/avernella/commit/$SHA). Install with: flatpak install --user ./$bundle"
           if gh release view flatpak-latest >/dev/null 2>&1; then
@@ -157,21 +200,34 @@ jobs:
               "out/flatpak/$bundle" "out/flatpak/${bundle}.sha256"
           fi
 
+      - name: Download OSTree archive from this run
+        if: steps.channel.outputs.latest == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: avernella-ostree-${{ needs.build.outputs.sha }}
+          path: out/site
+      - name: Stage the static OSTree files
+        if: steps.channel.outputs.latest == 'true'
+        run: |
+          python3 scripts/unpack-static-repo out/site/ostree.tar out/flatpak/repo
+          test -s out/flatpak/repo/summary
+
       - name: Publish Flatpak OSTree repository to GitHub Pages
         if: steps.channel.outputs.latest == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ steps.plan.outputs.sha }}
-          VERSION: ${{ steps.plan.outputs.version }}
         run: |
           scripts/publish-gh-pages flatpak out/flatpak/repo "$VERSION" "$SHA"
 
       - name: Commit updated Flatpak manifest to main
         if: steps.channel.outputs.latest == 'true'
         env:
-          SHA: ${{ steps.plan.outputs.sha }}
-          VERSION: ${{ steps.plan.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          git -C upstream fetch --quiet origin main
+          [[ "$(git -C upstream rev-parse origin/main)" == "$SHA" ]] || exit 0
+          git -C upstream checkout --quiet --detach "$SHA"
+          scripts/flatpak-recipe upstream flatpak
           if git diff --quiet -- flatpak/io.github.novesce.Avernella.yml flatpak/io.github.novesce.Avernella.metainfo.xml; then
             echo "Manifest already matches $SHA."
             exit 0
@@ -180,13 +236,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add flatpak/io.github.novesce.Avernella.yml flatpak/io.github.novesce.Avernella.metainfo.xml
           git commit -m "Update Flatpak manifest to Avernella $VERSION"
+          gh auth setup-git
           git pull --rebase origin main
-          git push origin main
+          git push origin HEAD:refs/heads/main
 
       - name: Archive this source revision's Flatpak
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ steps.plan.outputs.sha }}
         run: |
           scripts/source-release "$SHA"
           gh release upload "avernella-$SHA" --clobber \
